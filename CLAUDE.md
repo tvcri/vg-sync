@@ -8,11 +8,18 @@ A headless service that keeps three systems in step for Village Green (VG):
 
 It runs unattended on a schedule. No staff interaction, no UI.
 
-**Status (2026-11-11): nothing is designed or built yet.** This repo holds
-only this file, a README stub and a context brief. The first job in a new
-session is the design, not code. Read `docs/context-2026-11-11.md` before
-proposing anything: it records what is already decided, what was learned the
-hard way, and what is still open.
+**Status (2026-11-11): nothing is built, and there is no design document
+yet.** This repo holds only this file, a README stub and a context brief. The
+first job in a new session is the design for the LGL ↔ VG executable, not
+code. Read `docs/context-2026-11-11.md` before proposing anything: it records
+what is already decided (a good deal), what was learned the hard way, the
+questions out with the customer, and the engineering questions still open.
+
+**The engineer does not decide business rules.** Which system wins a
+conflict, who gets mailed, what deceased means for a record: those are the
+customer's. Do not ask the engineer to pick them. Design so they are
+configuration with a safe default, and collect open ones as a short
+plain-language list for the customer.
 
 ## This repo is public
 
