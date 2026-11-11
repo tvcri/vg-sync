@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+out/
+scratch/
+.tokens/
+*-sa-key.json
