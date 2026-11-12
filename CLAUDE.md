@@ -44,7 +44,7 @@ have no public remote.
 | `~/dev/tvcri/vg-utils/lgl-import` | The one-off LGL → VG donor import. `README.md`, `FINDINGS.md`, both `HANDOFF-*` files. `src/lgl.js` (API client), `src/snapshot.js` (full pull), `src/suggest.js` and `src/plan.js` (matching and the import rules), `src/person.js` (cleaning LGL values), `src/vg.js` (VG API writes). Design: `vg-utils/docs/superpowers/specs/2026-11-08-lgl-import-design.md`. |
 | `~/dev/tvcri/vg-utils/lgl-cleanup` | The LGL prune. `HANDOFF-2026-09-30.md` has the LGL data model and verified API facts. `src/classify.js` is the donor/dues rule. `src/match.js` is a cautionary example (see the brief). |
 | `~/dev/tvcri/vg-utils/mailchimp` | LGL donors → Mailchimp audience, additive, applies the Donor tag. `src/mailchimp.js` (client), `src/audience.js`, `src/donors.js`. |
-| `~/dev/tvcri/mailchimp-poc` | VG roster → Mailchimp (`sync-vg-to-mailchimp.mjs`), audience backup, and `HANDOFF.md` plus the account reference in `docs/`: every write ever made to the account, opt-out handling, billing limits. |
+| `~/dev/tvcri/mailchimp-poc` | VG roster → Mailchimp (`sync-vg-to-mailchimp.mjs`), audience backup, and `HANDOFF.md` plus the account reference in `docs/`: every write ever made to the account, opt-out handling, billing limits. **Start with this repo's `docs/mailchimp-findings-2026-11-11.md`**, which distills that project for the VG → Mailchimp executable without real data. |
 | `~/dev/tvcri/vg-utils/vg-api` | Calling the VG API as a user (Keycloak device flow), if the API route is chosen. |
 | `~/dev/tvcri/vg-utils/mysql-dump` | Prod backup and local restore, for building a test database. |
 | `~/dev/tvcri/agent-onboarding/board` | The project board helper. Work on VG gets a board item. |
