@@ -202,7 +202,11 @@ From the sibling projects:
 - **The app does not resolve a town on the server.** The browser calls `POST
   /op/geocode/town` and sends the result. The service does the same, so
   towns need no app change.
-- **`donor:write` is held by no role but Admin.**
+- **`donor:write` is held by no role but Admin** and the service's own role,
+  and the app has no screen that adds or removes a donor row. **Whether a
+  person is a donor is decided by LGL alone, through this service** (the
+  engineer, 2026-11-14). Staff do not remove donor links, so a person with
+  no donor row is never a staff decision for the sync to respect.
 - **The API and Keycloak are not on the VM.** They are Azure App Service
   sites reached over public HTTPS.
 
@@ -496,9 +500,10 @@ person stays in VG without the Donor mark, and the item goes to staff.
 `no-longer-donor` was not asked and stays `hold`.
 
 **(call)** Actions not built yet are `deferred`. The full pass reports and
-counts them, and makes no memory, hold or write for them. They are `to-lgl`,
-the LGL half of a `merge` and of `toward-deceased`, and the record action
-`unlink`. `unlink` waits for step 4, where merges are looked at.
+counts them, and makes no memory, hold or write for them. They are `to-lgl`
+and the LGL half of a `merge` and of `toward-deceased`. The record action
+`unlink` was deferred in step 3 and is built in step 4 (see "Unlinked
+donors", "Gone from LGL").
 
 Two more rows are settings, not cases. `couple-lgl-changed` says what a
 change to a couple's shared LGL record does in VG; it ships as `to-vg` (both
@@ -685,12 +690,79 @@ Three more rules keep a pass from making duplicates:
 A newly linked pair has no agreed values, so its differing fields are
 `never-agreed`. A newly created person is recorded as agreed on every field.
 
+**(call)** Rulings from the step 4 plan (2026-11-14,
+`docs/superpowers/plans/2026-11-14-lgl-vg-step4-unlinked-donors.md`):
+
+- **An unlinked donor's hold is keyed by its constituent**, with no person
+  and no field, so a donor has one such hold at a time. Its fingerprint is
+  built from the reason, the VG people matching found (sorted ids) and LGL's
+  last gift date; a rule dismissal is reconsidered when any of them changes.
+- **A staff dismissal leaves the donor alone.** A constituent with a
+  dismissed hold of kind `staff` and no person is not matched at all. It
+  still counts in the near-duplicate test, so a look-alike of it is held.
+- **Create is logged with a hold**, since `sync_log` is for LGL writes only.
+  After `POST /persons` and before the donor row, a `create-unfinished` hold
+  (person and constituent) is opened; it is closed once the donor row is
+  written. A later pass that finds it open links the person, if it still has
+  no donor row and its first and last names still match LGL's; otherwise the
+  hold stays open. The new person's memory rows are written between the two
+  calls: LGL's cleaned value per field, or null for a field LGL leaves empty.
+  A field LGL holds but could not clean is left out of the person and gets
+  no memory, so the next pass treats it as usual.
+- **Linked and created pairs are compared on the next pass**, not the one
+  that links them.
+- **Before a link, create or finish, every VG person is read again** (one
+  read, after the linked pairs' writes) and matching is run on it; anything
+  whose decision changed is skipped as stale.
+- **A refused link or create** opens a `vg-refused` hold with no person; it
+  is not tried again while that hold, open or dismissed, has the same
+  fingerprint.
+- **The circuit breaker counts links, follows, finishes, creates and
+  unlinks** as people changed; a create counts once, by constituent.
+
+**Gone from LGL.** `lgl-missing` is `unlink` (question 5). **(call)** Before
+removing the Donor mark, the pass treats the person as having no donor row
+and runs matching: if exactly one unlinked donor matches the person on email
+and name, that record is taken to be the one that replaced the gone record
+(an LGL merge keeps one of the two), and the donor row is pointed at it in
+one write ("follow"). Otherwise the donor row is removed and an `unlinked`
+hold (person and constituent) is opened for staff; it closes when the person
+is a donor again. A couple's record is never followed, since matching holds
+couple names, so both partners lose the mark. An LGL merge leaves nothing
+else the API can see (trial account, 2026-11-14): the merged-away id answers
+404, as a deleted one does, and the kept record carries no pointer to it. The
+kept record takes the other's gifts and, where staff tick them, its entries
+(same ids, current, not preferred) and its name fields; its `updated_at`
+moves, so the change check sees it. A name taken over in a merge is an
+ordinary LGL change to the kept record.
+
 **Staff decisions are not undone.** Before go-live, the import's skip and
 hold decisions are loaded once into the holds table as dismissed holds, keyed
 by constituent id. A dismissed hold made by staff is permanent. A dismissed
 hold made by a rule (for example, "last gift before the horizon") is
 reconsidered when the facts behind it change, such as a new gift. The seed
 data holds real ids and goes into the VG database, never this repo.
+
+**(call)** The load is `node src/lgl-vg/main.js seed-import --file
+<import-prod-*.json> [--write-vg]`, dry by default, reading the import's run
+file (`vg-utils/lgl-import/out/`). One hold per constituent:
+
+| Import decision | Hold |
+|---|---|
+| Staff chose Skip | dismissed, kind `staff`, reason `import-skip` |
+| Skipped, last gift before the horizon | dismissed, kind `rule`, reason `before-horizon`, with the fingerprint matching gives it |
+| Skipped, "Anonymous" placeholder | dismissed, kind `rule`, reason `anonymous` |
+| Held by the import | **open**, reason `import-hold` |
+
+The import's own holds (rows staff never confirmed, and two LGL rows pointing
+at one VG person) were never decided by anyone, so they are loaded open, not
+dismissed: a dismissed row would hide them from the count staff will see.
+The sync leaves such a donor alone while the hold is open, and closes it once
+the donor is linked by hand or is no longer an unlinked donor. Where a
+couple's two rows differ, `import-skip` wins, then `import-hold`. A
+constituent linked in VG today, or already holding one of these holds, gets
+nothing, so a second run adds nothing. A skip for a reason the command does
+not know stops the whole load.
 
 **What a hold means with no staff.** A hold closes by itself when the data
 changes so that the match becomes clean, for example when staff correct a
@@ -711,8 +783,13 @@ starts fresh.
 `unclean`, `ambiguous`, `couple`, `lost-nickname`, `deceased-removed`,
 `phones-no-slot` and `vg-refused`. The record situations' are `lgl-missing`
 and `no-longer-donor`. Step 3 owns exactly these reasons on holds with a
-`personId`, and closes only holds it owns. Holds from step 4 (unlinked
-donors) are never touched.
+`personId`, and closes only holds it owns. Step 4 owns the holds with no
+`personId` whose reason is a matching reason (`anonymous`, `deceased-in-lgl`,
+`couple-name`, `no-last-name`, `already-linked-elsewhere`, `multiple-matches`,
+`shared-email-different-name`, `name-only`, `same-address-last-name`,
+`before-horizon`, `duplicate-in-lgl`), `import-hold` or `vg-refused`, and
+the person-level `create-unfinished` and `unlinked`. `import-skip` is never
+closed by the sync.
 
 ## What is stored in VG
 
@@ -940,7 +1017,14 @@ unattended in production.
    against the dev VG and the trial account (21 scenarios, the circuit
    breaker's among them). They replace the paused write run.
 4. **Unlinked donors.** Linking and creating, and the one-time load of the
-   import's decisions.
+   import's decisions. **Done 2026-11-14:** 19 step 4 scenarios pass, and
+   the full set of 38 (branch `lgl-vg-step4`). Dry run on the production
+   snapshot of 2026-11-14 with production LGL reads: the seed loaded 199
+   holds (55 staff skips, 140 old last gifts, 4 import holds); the pass found
+   199 unlinked donors, all of them seeded; 138 of the 140 old-gift holds
+   kept the seed's fingerprint and stay dismissed, 2 became other holds
+   because VG has gained a person matching them; no link, create or unlink
+   (no new donor since the import).
 5. **Scheduler and deploy tooling.** The long-lived service running a nightly
    full pass, writing to VG only. Also the CI image build, the generalized
    deployer, log shipping and the two alerts, rehearsed outside production.
@@ -949,7 +1033,9 @@ unattended in production.
    including gifts, and their cursors.
 7. **VG to LGL.** Writes to LGL, using the calls verified on 2026-11-11.
    Then the one go-live: the service is deployed to production and LGL
-   writes are switched on in the stages above.
+   writes are switched on in the stages above. Before its first production
+   pass, `seed-import --write-vg` loads the import review's decisions into
+   production VG (see "Staff decisions are not undone").
 
 Two checks remain and must not be forgotten:
 
@@ -1038,7 +1124,11 @@ engineer on 2026-11-14.
 - The exact request and response shapes of the sync endpoints.
 - The comparable-form rules in detail, starting from `lgl-import/count.js`
   and `src/person.js`.
-- Whether a merge in LGL can be detected and the surviving record followed.
-  The API has not been shown to expose it.
+- ~~Whether a merge in LGL can be detected.~~ Settled 2026-11-14: it cannot,
+  and need not be. A hand merge on the trial account left the merged-away id
+  answering 404 and no trace of it on the kept record, so a merge is a
+  deletion to the sync and the survivor is followed when matching finds it
+  (see "Gone from LGL"). The harness's simulation of a merge with a delete is
+  therefore faithful. LGL's unmerge is untested.
 - The values of the limits (circuit breaker, constituent-count drop,
   flapping).

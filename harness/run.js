@@ -3,6 +3,7 @@
 // against the LGL trial account and the dev VG, one real service pass per phase.
 //
 //   npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only]
+//   (--step defaults to 4)
 //
 // Every run reseeds unless --resume. Records are left in place after a run for
 // inspection; the next run wipes them first. planRun is pure and unit-tested;
@@ -34,7 +35,7 @@ const asList = (v) => (v === undefined || v === null ? [] : [].concat(v))
 // --- Pure parts -------------------------------------------------------------
 
 export function parseArgs (argv) {
-  const opts = { only: null, step: 3, overnight: false, resume: false, guardsOnly: false }
+  const opts = { only: null, step: 4, overnight: false, resume: false, guardsOnly: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--overnight') opts.overnight = true
@@ -65,6 +66,8 @@ export function planRun ({ selected, phaseCount: count }) {
   let pass = 0
   const group = (scenarios, n) => {
     steps.push({ kind: 'reseed', scenarios: scenarios.map((s) => s.name) })
+    const importing = scenarios.filter((s) => s.importDecision)
+    if (importing.length) steps.push({ kind: 'seed-import', scenarios: importing.map((s) => s.name) })
     for (let p = 0; p < n; p++) {
       for (const s of scenarios) if (s.phases[p]?.edit) steps.push({ kind: 'edit', scenario: s.name, phase: p })
       for (const s of scenarios) if (s.phases[p]?.wait) steps.push({ kind: 'wait', scenario: s.name, phase: p, wait: s.phases[p].wait })
@@ -103,11 +106,29 @@ export function lglDonor (scenario, phaseIndex, today) {
 // This scenario's rows from the pass's decisions file and from /sync/holds.
 export function scenarioRows ({ constituentId, personIds }, { decisions, holds }) {
   const people = new Set(personIds.map(String))
-  const mine = (personId, cid) => (personId != null ? people.has(String(personId)) : String(cid) === String(constituentId))
+  // A person-level hold is this scenario's when it names one of its people or its constituent (a person
+  // the sync created for it, or linked to it); a constituent-level hold when it names its constituent.
+  const mine = (personId, cid) => (personId != null && people.has(String(personId))) || String(cid) === String(constituentId)
   return {
     decisions: decisions.filter((d) => people.has(String(d.personId)) || String(d.constituentId) === String(constituentId)),
     holds: holds.filter((h) => mine(h.personId, h.lglConstituentId)),
   }
+}
+
+// The import run file seed-import reads, in the import's own shape, for the scenarios that start
+// with an import decision. lastGiftDate is the newest seeded gift that is not dues.
+export function importRun (scenarios, state, today) {
+  const REASONS = {
+    'staff-skip': { kind: 'skip', reason: 'Staff chose Skip' },
+    'horizon-skip': { kind: 'skip', reason: 'Last gift before the horizon; new people only for gifts since' },
+    hold: { kind: 'hold', reason: 'Not confirmed on the Work list' },
+  }
+  const actions = scenarios.filter((s) => s.importDecision).map((s) => {
+    const id = String(state.scenarios[s.name].constituentId)
+    const dates = asList(s.gifts).filter((g) => !g.dues).map((g) => resolveDate(g.date, today)).sort()
+    return { key: id, lglId: id, name: s.name, ...REASONS[s.importDecision], lastGiftDate: dates.at(-1) ?? null }
+  })
+  return { target: 'harness', executed: true, actions }
 }
 
 // --- Live parts -------------------------------------------------------------
@@ -126,12 +147,12 @@ async function loadScenarioModules () {
 }
 
 // Runs one pass as a child process; its output goes to the screen and to the log.
-function runPass ({ dir, args, log }) {
+function runPass ({ dir, args, log, command = ['full', '--out', dir], logName = `${basename(dir)}.log` }) {
   const exampleText = readFileSync(join(REPO, '.env.harness.example'), 'utf8')
-  const argv = ['src/lgl-vg/main.js', 'full', '--env', ENV_FILE, '--write-vg', '--out', dir, ...args]
+  const argv = ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', ...args]
   log(`$ node ${argv.join(' ')}`)
   return new Promise((resolve, reject) => {
-    const file = createWriteStream(join(dir, `${basename(dir)}.log`))
+    const file = createWriteStream(join(dir, logName))
     const child = spawn(process.execPath, argv, { cwd: REPO, env: serviceEnv(process.env, exampleText), stdio: ['ignore', 'pipe', 'pipe'] })
     child.stdout.on('data', (d) => { process.stdout.write(d); file.write(d) })
     child.stderr.on('data', (d) => { process.stderr.write(d); file.write(d) })
@@ -286,6 +307,13 @@ export async function main (argv, { log = console.log } = {}) {
       await reseedVg(env, { envFile: join(REPO, ENV_FILE) })
       state = await seedScenarios(group, { lglWriter, vgStaff, env, today, log })
       await saveRun(i + 1)
+    } else if (step.kind === 'seed-import') {
+      const group = step.scenarios.map((n) => byName.get(n))
+      const file = join(outDir, 'import-run.json')
+      await writeFile(file, JSON.stringify(importRun(group, state, today), null, 2) + '\n')
+      log(`\n== Seed the import's decisions: ${step.scenarios.join(', ')}`)
+      const code = await runPass({ dir: outDir, args: [], log, command: ['seed-import', '--file', file], logName: 'seed-import.log' })
+      if (code !== 0) for (const sc of group) fail(sc.name, 0, 'seed-import', 'exit 0', code)
     } else if (step.kind === 'edit') {
       log(`edit ${s.name} phase ${step.phase + 1}`)
       try {
@@ -320,6 +348,9 @@ export async function main (argv, { log = console.log } = {}) {
       const entry = state.scenarios[s.name]
       const vgPersons = []
       for (const id of entry.personIds) vgPersons.push(await vgStaff.getPerson(id))
+      // A scenario with no VG person of its own is checked against the people linked to its constituent
+      // (the person the sync created for it).
+      if (!entry.personIds.length) vgPersons.push(...await vgStaff.getPersons(entry.constituentId))
       const lglConstituent = await getConstituentOrNull(lglWriter, entry.constituentId)
       if (lglConstituent) Object.assign(lglConstituent, lglDonor(s, step.phase, today))
       const rows = scenarioRows(entry, pass)
@@ -327,6 +358,7 @@ export async function main (argv, { log = console.log } = {}) {
         scenario: s, phaseIndex: step.phase, vgPersons, // a person not found is null, which checkScenario reports as missing
         lglConstituent, holds: rows.holds, decisions: rows.decisions, passStartedAt: pass.passStartedAt,
         passExitCode: pass.code, today,
+        constituentIds: Object.fromEntries(Object.entries(state.scenarios).map(([n, e]) => [n, e.constituentId])),
       })
       for (const f of failures) (results[s.name] ??= []).push(f)
       if (steps[i + 1]?.kind !== 'check') await saveRun(i + 1)

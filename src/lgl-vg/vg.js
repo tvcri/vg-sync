@@ -1,7 +1,7 @@
 // Client for the Village Green API, signed in as a Keycloak service account
-// (client-credentials grant). Reads the roster, and writes person and donor changes, the
-// town lookup, and the sync tables (field memory, holds, runs). Batch calls are split into
-// chunks of 500, the API's limit.
+// (client-credentials grant). Reads the roster; creates people and writes person and donor
+// changes (a donor row can be removed); calls the town lookup; and reads and writes the sync
+// tables (field memory, holds, runs). Batch calls are split into chunks of 500, the API's limit.
 // fetch and the clock are injectable for tests.
 
 const EXPIRY_MARGIN_MS = 30_000
@@ -56,6 +56,7 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
         const hint = res.status === 403 ? FORBIDDEN_HINT : ''
         throw httpError(`VG ${method} ${path.split('?')[0]} → ${res.status}: ${text.slice(0, 200)}${hint}`, res.status)
       }
+      if (res.status === 204) return null // DELETE answers with no body
       return res.json()
     }
   }
@@ -91,9 +92,11 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
       const q = new URLSearchParams({ lglConstituentId: String(lglConstituentId), projection: 'detail' })
       return get(`/persons?${q}`)
     },
+    createPerson: (body) => request('POST', '/persons', body),
     patchPerson: (personId, body) => request('PATCH', `/persons/${personId}`, body),
     putDonor: (personId, { lglConstituentId, lastGiftDate }) =>
       request('PUT', `/persons/${personId}/donor`, { lglConstituentId, lastGiftDate }),
+    deleteDonor: (personId) => request('DELETE', `/persons/${personId}/donor`),
     geocodeTown: ({ street, city, state, zip }) => request('POST', '/op/geocode/town', { street, city, state, zip }),
     getSyncFields: () => get('/sync/fields'),
     async putSyncFields(rows) {

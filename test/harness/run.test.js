@@ -59,7 +59,7 @@ test('phase args from the lockstep group are merged once', () => {
 })
 
 test('parseArgs reads the flags', () => {
-  assert.deepEqual(parseArgs([]), { only: null, step: 3, overnight: false, resume: false, guardsOnly: false })
+  assert.deepEqual(parseArgs([]), { only: null, step: 4, overnight: false, resume: false, guardsOnly: false })
   const o = parseArgs(['--only', 'smoke', '--only', 'names', '--step', '4', '--overnight', '--resume', '--guards-only'])
   assert.deepEqual(o, { only: ['smoke', 'names'], step: 4, overnight: true, resume: true, guardsOnly: true })
   assert.throws(() => parseArgs(['--step', 'x']), /--step/)
@@ -129,4 +129,20 @@ test('planRun marks a pass whose runAlone scenario expects it to fail', () => {
   const alone = { name: 'breaker', runAlone: true, phases: [{ args: ['--max-people', '1'], expect: { passFails: true } }, { expect: { writes: 0 } }] }
   const passes = planRun({ selected: [scen('a', 1), alone], phaseCount: 1 }).filter((s) => s.kind === 'pass')
   assert.deepEqual(passes.map((p) => p.expectFail), [false, true, false])
+})
+
+test('a group with an import decision gets a seed-import step right after its reseed', async () => {
+  const { planRun, importRun } = await import('../../harness/run.js')
+  const s = (name, o = {}) => ({ name, phases: [{ run: 'full' }], ...o })
+  const steps = planRun({ selected: [s('a'), s('b', { importDecision: 'staff-skip' })] })
+  assert.deepEqual(steps.slice(0, 2).map((x) => [x.kind, x.scenarios]), [['reseed', ['a', 'b']], ['seed-import', ['b']]])
+  const run = importRun([s('a'), s('b', { importDecision: 'horizon-skip', gifts: [{ date: '-6y' }, { date: '-1d', dues: true }] })],
+    { scenarios: { a: { constituentId: 1 }, b: { constituentId: 2 } } }, '2026-11-14')
+  assert.deepEqual(run, { target: 'harness', executed: true, actions: [{ key: '2', lglId: '2', name: 'b', kind: 'skip', reason: 'Last gift before the horizon; new people only for gifts since', lastGiftDate: '2020-11-14' }] })
+})
+
+test('scenarioRows takes holds naming the scenario\'s constituent, with or without a person', async () => {
+  const { scenarioRows } = await import('../../harness/run.js')
+  const holds = [{ personId: '500', lglConstituentId: '2' }, { personId: null, lglConstituentId: '2' }, { personId: '9', lglConstituentId: '3' }]
+  assert.equal(scenarioRows({ constituentId: 2, personIds: [] }, { decisions: [], holds }).holds.length, 2)
 })

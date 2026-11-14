@@ -18,7 +18,7 @@ const person = (o = {}, d = {}) => ({
 const one = (donors, persons = [], opt = OPT) => matchUnlinked(donors, persons, opt)[0]
 
 test('anonymous', () => {
-  assert.deepEqual(one([donor({ first_name: 'Anonymous' })]), { constituentId: 1, outcome: 'hold', reason: 'anonymous' })
+  assert.deepEqual(one([donor({ first_name: 'Anonymous' })]), { constituentId: 1, outcome: 'hold', reason: 'anonymous', candidates: [] })
   assert.equal(one([donor({ last_name: 'anonymous donor' })]).reason, 'anonymous')
 })
 test('an "is_anon" donor with a real name is not treated as anonymous', () => {
@@ -127,7 +127,7 @@ test('Jane Doe and John Doe at the same zip are both created', () => {
 test('no last name is held before matching, even with an email shared with a person with no last name', () => {
   const p = person({ email: 'x@example.org' }, { firstName: 'Jane', lastName: '' })
   const r = one([donor({ last_name: '', email_addresses: [email('x@example.org')] })], [p])
-  assert.deepEqual(r, { constituentId: 1, outcome: 'hold', reason: 'no-last-name' })
+  assert.deepEqual(r, { constituentId: 1, outcome: 'hold', reason: 'no-last-name', candidates: [] })
 })
 test('two different emails resolving to two different VG people with the same name are held as multiple-matches', () => {
   const ps = [person({ personId: 1, email: 'a@example.org' }), person({ personId: 2, email: 'b@example.org' })]
@@ -153,4 +153,41 @@ test('a hyphen in a last name matches the same name written with a space', () =>
   const p = person({ email: 'a@example.org' }, { lastName: 'Doe Smith' })
   const r = one([donor({ last_name: 'Doe-Smith', email_addresses: [email('a@example.org')] })], [p])
   assert.equal(r.outcome, 'link')
+})
+
+test('holds name the VG people they matched, as sorted string ids', () => {
+  const a = person({ personId: 12, email: 'other@example.org' })
+  const b = person({ personId: 3, email: 'more@example.org' })
+  assert.deepEqual(one([donor()], [a, b]), { constituentId: 1, outcome: 'hold', reason: 'name-only', candidates: ['12', '3'] })
+  const linked = person({ personId: 5, email: 'jane@example.org', donor: { lglConstituentId: 999, lastGiftDate: null } })
+  assert.deepEqual(one([donor({ email_addresses: [email('jane@example.org')] })], [linked]).candidates, ['5'])
+  const sameHouse = person({ personId: 8 }, { firstName: 'Pat', street: '12 Elm St', zip: '99999' })
+  const r = one([donor({ street_addresses: [street('12 Elm Street', '99999')] })], [sameHouse])
+  assert.deepEqual([r.reason, r.candidates], ['same-address-last-name', ['8']])
+})
+
+test('an excluded donor is skipped and does not make another donor\'s link a duplicate', () => {
+  const p = person({ email: 'jane@example.org' })
+  const a = donor({ id: 1, email_addresses: [email('jane@example.org')] })
+  const b = donor({ id: 2, email_addresses: [email('jane@example.org')] })
+  const [ra, rb] = matchUnlinked([a, b], [p], { ...OPT, exclude: new Set(['1']) })
+  assert.deepEqual(ra, { constituentId: 1, outcome: 'skip', reason: 'left-alone' })
+  assert.equal(rb.outcome, 'link')
+})
+
+test('a donor that looks like an excluded one is still held', () => {
+  const a = donor({ id: 1, email_addresses: [email('jane1@example.org')], street_addresses: [street('1 Elm St', '99999')] })
+  const b = donor({ id: 2, email_addresses: [email('jane2@example.org')], street_addresses: [street('9 Oak St', '99999')] })
+  const [, rb] = matchUnlinked([a, b], [], { ...OPT, exclude: new Set(['1']) })
+  assert.equal(rb.reason, 'duplicate-in-lgl')
+})
+
+test('unlinkedFingerprint depends on reason, candidate set and last gift date, not candidate order', async () => {
+  const { unlinkedFingerprint } = await import('../../src/lgl-vg/match.js')
+  const f = unlinkedFingerprint('name-only', ['3', '12'], '2026-01-05')
+  assert.match(f, /^[0-9a-f]{32}$/)
+  assert.equal(f, unlinkedFingerprint('name-only', [12, 3], '2026-01-05'))
+  assert.notEqual(f, unlinkedFingerprint('name-only', ['3'], '2026-01-05'))
+  assert.notEqual(f, unlinkedFingerprint('name-only', ['3', '12'], '2026-02-05'))
+  assert.notEqual(f, unlinkedFingerprint('before-horizon', ['3', '12'], '2026-01-05'))
 })

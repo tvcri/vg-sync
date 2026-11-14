@@ -32,8 +32,12 @@ people. Do not commit or share them. `out/` is gitignored.
 ## Running a full pass
 
 `npm run full` reads Little Green Light and Village Green, decides every linked
-pair field by field from the sync memory and `policy.json`, and prints a summary
-followed by one line: `PASS OK full dry-run ...` or `PASS FAILED full <reason>`.
+pair field by field from the sync memory and `policy.json`, links or creates a
+VG person for each LGL donor with no link (or holds it with a reason), removes
+the Donor mark from a person whose LGL record is gone (or follows it to the
+record that replaced it), and prints a summary followed by one line:
+`PASS OK full dry-run ...` or `PASS FAILED full <reason>`. The line counts
+`links`, `creates` and `unlinks` beside the field writes.
 
 It is a dry run unless you add `--write-vg`. A dry run makes only read requests
 to VG and none that change LGL. With `--write-vg` it records a run row in VG,
@@ -60,7 +64,19 @@ Each pass writes `out/full-<timestamp>.jsonl`, one decision per line, once at
 the end. It holds real people. Do not commit or share it. A failure before
 planning (sign-in, a failed read, the constituent-count check) writes no file.
 On a dry run the PASS line shows `holdsOpen` (open holds read) and
-`holdsPlanned` (holds this pass wants).
+`holdsPlanned` (holds this pass wants). The summary's `holdsIfWritten` says what a write
+run would do to the hold table (opened, seen, reopened, closed, left dismissed).
+
+## Loading the import's decisions (once, before go-live)
+
+`node src/lgl-vg/main.js seed-import --file <import-prod-*.json>` reads the
+run file of the one-off LGL → VG import (`vg-utils/lgl-import/out/`) and loads
+its decisions as holds, so the sync never undoes them: a staff Skip becomes a
+permanent dismissal, a skip for an old last gift a rule dismissal, and a row
+the import held an open `import-hold`. It is a dry run unless you add
+`--write-vg`; it prints counts only, never a name. A constituent already
+seeded, or linked in VG, is left out, so running it twice adds nothing. The
+file holds real data: it stays in `vg-utils`, never in this repo.
 
 ## Setting up the service account
 

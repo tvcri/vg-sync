@@ -63,12 +63,24 @@ test('dismissed hold no longer desired is left alone', () => {
 
 test('not-owned holds are never touched', () => {
   const r = reconcileHolds([], [
-    have({ holdId: 'a', personId: null, reason: 'name-only' }),
-    have({ holdId: 'b', reason: 'already-linked-elsewhere' }),
-    have({ holdId: 'c', personId: null }),
+    have({ holdId: 'b', reason: 'already-linked-elsewhere' }), // a matching reason on a person: nobody's
+    have({ holdId: 'c', personId: null }), // a field case with no person: nobody's
+    have({ holdId: 'd', personId: null, reason: 'import-skip', state: 'dismissed', dismissalKind: 'staff' }),
+    have({ holdId: 'e', personId: null, reason: 'some-later-step' }),
   ])
   assert.deepEqual(r.patch, [])
   assert.equal(r.counts.closed, 0)
+})
+
+test('step 4 closes its own: unlinked-donor holds with no person, import holds, and its person notices', () => {
+  const r = reconcileHolds([], [
+    have({ holdId: 'a', personId: null, field: null, reason: 'name-only' }),
+    have({ holdId: 'b', personId: null, field: null, reason: 'import-hold' }),
+    have({ holdId: 'c', personId: null, field: null, reason: 'vg-refused' }),
+    have({ holdId: 'd', field: null, reason: 'unlinked' }),
+    have({ holdId: 'e', field: null, reason: 'create-unfinished' }),
+  ])
+  assert.deepEqual(r.patch.map((p) => [p.holdId, p.state]), [['a', 'closed'], ['b', 'closed'], ['c', 'closed'], ['d', 'closed'], ['e', 'closed']])
 })
 
 test('two desired holds with the same key open once', () => {

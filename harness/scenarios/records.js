@@ -17,27 +17,15 @@ export default [
     ],
   },
   {
-    name: 'deleted-lgl-constituent-unlink-is-deferred',
-    why: 'The policy file: lgl-missing is unlink (customer question 5), and unlink is deferred until step 4: reported and counted, no write, no hold; the person keeps the Donor mark for now.',
-    since: 3,
-    ...agreeing({ first: 'Simeon', last: 'Halloran-Pryce', ...base }),
-    gifts: [GIFT],
-    phases: [
-      { run: 'full', expect: { writes: 0, holds: [] } },
-      { edit: { lgl: { delete: true } }, run: 'full', expect: { writes: 0, deferred: 1, lgl: { deleted: true }, vg: { donor: true }, holds: [] } },
-      { run: 'full', expect: { writes: 0, deferred: 1, vg: { donor: true }, holds: [] } },
-    ],
-  },
-  {
     name: 'deleted-lgl-constituent-loses-donor-mark',
-    why: 'Customer question 5 (lgl-missing is unlink): the person stays in VG without the Donor mark. Needs step 4\'s unlink.',
+    why: 'Customer question 5 (lgl-missing is unlink): the person stays in VG without the Donor mark, and an unlinked hold goes to staff. It stays open while the person has no donor row. (Replaces the step 3 scenario in which unlink was deferred.)',
     since: 4,
     ...agreeing({ first: 'Thaddeus', last: 'Corrigall', ...base }),
     gifts: [GIFT],
     phases: [
       { run: 'full', expect: { writes: 0, holds: [] } },
-      { edit: { lgl: { delete: true } }, run: 'full', expect: { lgl: { deleted: true }, vg: { donor: false } } },
-      { run: 'full', expect: { writes: 0, vg: { donor: false } } },
+      { edit: { lgl: { delete: true } }, run: 'full', expect: { writes: 1, lgl: { deleted: true }, vg: { donor: false }, holds: [{ field: null, reason: 'unlinked' }] } },
+      { run: 'full', expect: { writes: 0, vg: { donor: false }, holds: [{ field: null, reason: 'unlinked' }] } },
     ],
   },
 ]

@@ -67,12 +67,14 @@ export function planLinked({ constituents, gifts, persons, memory, refusals, pol
     if (d.field === 'address') w.address = { street: value.street, city: value.city, state: value.state, zip: value.zip }
   }
 
+  // unlink: the donor row is removed, or followed to a record that replaced this one; planUnlinked decides which
+  const unlinks = []
   const recordRule = (kind, key, people, detail) => {
     const action = policy.record(kind)
     for (const p of people) {
       const d = { kind: 'record', personId: String(p.personId), constituentId: key, action }
       if (action === 'hold') hold(d, { reason: kind, fingerprint: fingerprint([kind, key]), detail })
-      else decisions.push({ ...d, outcome: 'deferred', note: kind })
+      else unlinks.push({ personId: String(p.personId), constituentId: key, reason: kind })
     }
   }
 
@@ -179,7 +181,7 @@ export function planLinked({ constituents, gifts, persons, memory, refusals, pol
 
   const writes = [...personWrites.values(), ...donorWrites]
   return {
-    decisions, writes, agree, holds,
+    decisions, writes, agree, holds, unlinks,
     counts: {
       ...counts,
       fields: fieldCounts,

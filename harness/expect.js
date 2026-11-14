@@ -16,7 +16,9 @@ const holdKey = (h) => `${h.field}|${h.reason}|${h.state ?? 'open'}`
 // phaseIndex is 0-based; one past the scenario's phases is checked as undisturbed.
 // passExitCode: the pass's exit code; with expect.passFails a zero exit is the failure.
 // today ('YYYY-MM-DD'): resolves a relative date ('-5d') in an expected lastGiftDate or deceased date.
-export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent, holds = [], decisions = [], passStartedAt, passExitCode, today }) {
+// constituentIds: scenario name -> its LGL constituent id, for expect.vg.donorOf (the scenario whose
+//   constituent the person must be linked to).
+export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent, holds = [], decisions = [], passStartedAt, passExitCode, today, constituentIds = {} }) {
   if (!passStartedAt) throw new Error('checkScenario needs passStartedAt (an ISO string)')
   const when = (v) => {
     if (typeof v !== 'string' || !/^[+-]\d+[dy]$/.test(v)) return v
@@ -57,6 +59,11 @@ export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent
       const have = vgFields(p)
       for (const [field, want] of Object.entries(exp)) {
         if (field === 'donor') compare(`${prefix}.donor`, want, p.donor != null)
+        else if (field === 'donorOf') {
+          const id = constituentIds[want]
+          if (id === undefined) fail(`${prefix}.donorOf`, 'a scenario in this run', want)
+          else compare(`${prefix}.donorOf`, `${want} (${id})`, p.donor ? `${Object.keys(constituentIds).find((k) => String(constituentIds[k]) === String(p.donor.lglConstituentId)) ?? '?'} (${p.donor.lglConstituentId})` : 'none')
+        }
         else if (field === 'lastGiftDate') compare(`${prefix}.lastGiftDate`, dated(field, want), p.donor?.lastGiftDate ?? null)
         else compareField(`${prefix}.${field}`, field, dated(field, want), have[field])
       }

@@ -1,6 +1,8 @@
 // Scenario loading, relative dates and selection. Pure: no I/O.
 
-const SCENARIO_KEYS = new Set(['name', 'why', 'since', 'vg', 'lgl', 'gifts', 'link', 'couple', 'phases', 'overnight', 'runAlone', 'known'])
+const SCENARIO_KEYS = new Set(['name', 'why', 'since', 'vg', 'lgl', 'gifts', 'link', 'couple', 'phases', 'overnight', 'runAlone', 'known', 'importDecision'])
+// The import review's decisions a scenario can start with (loaded by the real seed-import command).
+export const IMPORT_DECISIONS = new Set(['staff-skip', 'horizon-skip', 'hold'])
 const PHASE_KEYS = new Set(['run', 'edit', 'wait', 'args', 'expect', 'known'])
 const REQUIRED = ['name', 'why', 'since', 'phases']
 
@@ -34,6 +36,9 @@ export function loadScenarios (modules) {
         if (!SCENARIO_KEYS.has(k)) throw new Error(`Scenario "${s.name}" has an unknown key "${k}"`)
       }
       if (!Array.isArray(s.phases)) throw new Error(`Scenario "${s.name}": phases must be a list`)
+      if (s.importDecision !== undefined && !IMPORT_DECISIONS.has(s.importDecision)) {
+        throw new Error(`Scenario "${s.name}": importDecision must be one of ${[...IMPORT_DECISIONS].join(', ')}`)
+      }
       s.phases.forEach((p, i) => {
         if (p === null || typeof p !== 'object' || Array.isArray(p)) throw new Error(`Scenario "${s.name}" phase ${i + 1} is not an object`)
         for (const k of Object.keys(p ?? {})) {
@@ -56,7 +61,7 @@ export function loadScenarios (modules) {
   return list
 }
 
-export function selectScenarios (list, { only, step = 3, overnight = false } = {}) {
+export function selectScenarios (list, { only, step = 4, overnight = false } = {}) {
   const wanted = only == null ? null : [].concat(only)
   const selected = []
   const skipped = []

@@ -1,12 +1,21 @@
 // Reconciles the holds this pass wants against the sync_hold rows VG already has.
-// Pure; returns the batch bodies for VG's hold endpoints. Holds this step does not own
-// (unlinked donors, later steps) are never touched.
+// Pure; returns the batch bodies for VG's hold endpoints. A hold is closed only by the step that
+// owns it (linked pairs: step 3; unlinked donors: step 4); any other hold is never touched.
+import { MATCH_REASONS } from './match.js'
 
 export const OWNED_REASONS = new Set([
   'never-agreed', 'both-changed', 'lgl-cleared', 'vg-cleared',
   'unclean', 'ambiguous', 'couple', 'lost-nickname', 'deceased-removed', 'phones-no-slot', 'vg-refused',
   'lgl-missing', 'no-longer-donor',
 ])
+
+// Step 4: holds on an unlinked constituent (no personId), and the two person-level notices it opens.
+export const UNLINKED_REASONS = new Set([...MATCH_REASONS, 'import-hold', 'vg-refused'])
+export const UNLINKED_PERSON_REASONS = new Set(['create-unfinished', 'unlinked'])
+
+export const owned = (h) => (h.personId != null
+  ? OWNED_REASONS.has(h.reason) || UNLINKED_PERSON_REASONS.has(h.reason)
+  : UNLINKED_REASONS.has(h.reason))
 
 const keyOf = (h) => [h.lglConstituentId, h.personId, h.field, h.reason].map((v) => String(v ?? '')).join('|')
 
@@ -52,7 +61,7 @@ export function reconcileHolds(desired, existing) {
 
   for (const [k, h] of have) {
     if (wanted.has(k)) continue
-    if (h.state === 'open' && h.personId != null && OWNED_REASONS.has(h.reason)) {
+    if (h.state === 'open' && owned(h)) {
       patch.push({ holdId: h.holdId, state: 'closed' })
       counts.closed++
     }

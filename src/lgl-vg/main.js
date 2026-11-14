@@ -1,5 +1,6 @@
-// Command line for the LGL <-> VG report (writes nothing to LGL or VG), the full pass (dry unless --write-vg) and the
-// service-account setup (records the account's own privacy acknowledgement in VG, only on request).
+// Command line for the LGL <-> VG report (writes nothing to LGL or VG), the full pass (dry unless --write-vg), the
+// one-time load of the import's decisions (dry unless --write-vg) and the service-account setup (records the
+// account's own privacy acknowledgement in VG, only on request).
 
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -11,10 +12,12 @@ import { createVgClient } from './vg.js'
 import { buildReport } from './report.js'
 import { parsePolicy } from './policy.js'
 import { runFullPass } from './pass.js'
+import { importSeed } from './seed.js'
 
 const USAGE = `Usage:
   node src/lgl-vg/main.js report [--out <dir>] [--save-snapshot] [--snapshot <file>]
   node src/lgl-vg/main.js full [--write-vg] [--max-people <n>] [--out <dir>] [--snapshot <file>]
+  node src/lgl-vg/main.js seed-import --file <import-run.json> [--write-vg]
   node src/lgl-vg/main.js setup [--acknowledge-privacy]
 Any command also takes --env <file> (default .env). Variables already set in the
 environment are not overridden by the file.`
@@ -108,6 +111,55 @@ async function full(argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFil
   }
 }
 
+function parseSeedOptions(args) {
+  const opts = { file: null, writeVg: false }
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '--write-vg') opts.writeVg = true
+    else if (a === '--file') {
+      opts.file = args[++i]
+      if (opts.file === undefined) throw new Error('--file needs a value')
+    } else throw new Error(`Unknown option ${a}`)
+  }
+  if (!opts.file) throw new Error('seed-import needs --file <the import run file, import-prod-*.json>')
+  return opts
+}
+
+// Loads the import's skip and hold decisions as holds (seed.js). The file holds real data; nothing
+// from it is printed but counts.
+async function seedImport(argv, { env, fetchImpl = fetch, now, stdout, readFile: read }) {
+  let opts
+  try {
+    opts = parseSeedOptions(argv)
+  } catch (err) {
+    stdout(err.message)
+    return 2
+  }
+  try {
+    let run
+    try {
+      run = JSON.parse(await read(opts.file))
+    } catch {
+      throw new Error(`${opts.file} is not readable JSON`)
+    }
+    if (!Array.isArray(run?.actions)) throw new Error(`${opts.file} has no actions; is it an import run file?`)
+    if (run.executed !== true) throw new Error(`${opts.file} is a dry run of the import (executed is not true)`)
+    const config = loadConfig(env)
+    const vg = createVgClient({ ...config.vg, fetchImpl, now })
+    await vg.whoAmI()
+    const persons = await vg.listPersons()
+    const holds = await vg.getSyncHolds(['open', 'dismissed', 'closed'])
+    const { items, counts } = importSeed(run.actions, { persons, holds })
+    stdout(JSON.stringify({ target: run.target ?? null, actions: run.actions.length, toLoad: items.length, counts }, null, 2))
+    if (opts.writeVg && items.length) await vg.createSyncHolds(items)
+    stdout(`SEED OK ${opts.writeVg ? 'write-vg' : 'dry-run'} loaded=${opts.writeVg ? items.length : 0} planned=${items.length}`)
+    return 0
+  } catch (err) {
+    stdout(`SEED FAILED ${err.message}`)
+    return 1
+  }
+}
+
 function parseSetupOptions(args) {
   const opts = { acknowledgePrivacy: false }
   for (const a of args) {
@@ -160,6 +212,7 @@ export async function run(argv, deps) {
   const { env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read } = deps
   if (argv[0] === 'setup') return setup(argv.slice(1), deps)
   if (argv[0] === 'full') return full(argv.slice(1), deps)
+  if (argv[0] === 'seed-import') return seedImport(argv.slice(1), deps)
   if (argv[0] !== 'report') {
     stdout(USAGE)
     return 2

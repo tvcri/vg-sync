@@ -12,6 +12,7 @@ function fakeFetch(responses, calls = []) {
     calls.push({ url: new URL(url), init })
     const r = responses.shift()
     if (!r) return new Response('queue empty', { status: 500 })
+    if (r.status === 204) return new Response(null, { status: 204 })
     const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body ?? {})
     return new Response(body, { status: r.status ?? 200 })
   }
@@ -286,4 +287,16 @@ test('lastFullRun returns the newest ok run, skipping failed and running ones', 
   assert.deepEqual(calls[1].url.searchParams.getAll('kind'), ['full'])
   assert.equal(calls[1].url.searchParams.get('limit'), '20')
   assert.equal(await vg.lastFullRun(), null)
+})
+
+test('createPerson posts the body; deleteDonor sends DELETE and takes a 204 with no body', async () => {
+  const calls = []
+  const vg = make([tok(), { status: 201, body: { personId: '42' } }, { status: 204 }], calls)
+  assert.deepEqual(await vg.createPerson({ lastName: 'Doe', firstName: 'Jane' }), { personId: '42' })
+  assert.equal(calls[1].init.method, 'POST')
+  assert.equal(calls[1].url.pathname, '/api/persons')
+  assert.deepEqual(JSON.parse(calls[1].init.body), { lastName: 'Doe', firstName: 'Jane' })
+  assert.equal(await vg.deleteDonor('42'), null)
+  assert.equal(calls[2].init.method, 'DELETE')
+  assert.equal(calls[2].url.pathname, '/api/persons/42/donor')
 })

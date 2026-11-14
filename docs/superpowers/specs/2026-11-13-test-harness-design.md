@@ -281,7 +281,11 @@ changes value, and no wait follows seeding. "Invented" has to mean a street
 that does not exist. The smoke scenario's first address, a plausible real
 one, was rewritten by the sweep about eleven minutes into the final run
 (street abbreviated, city and ZIP changed) and failed an undisturbed check.
-Scenario streets are made-up names. The stamp may move `updated_at`, which
+Scenario streets are made-up names. In the step 4 runs (2026-11-14) even
+that was not enough: two made-up streets in a real town were matched to real
+streets nearby ("Larkspur Hollow" to "Larkspur Rd"; "Hartwold Lane" to "Lane
+E", with a new ZIP) and rewritten. The step 4 scenarios therefore use a town
+and ZIP that do not exist (`Zzyzxford`, `00901`). The stamp may move `updated_at`, which
 matters only to step 6's LGL check, where a record read again compares
 `same`.
 

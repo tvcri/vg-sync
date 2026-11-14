@@ -113,3 +113,13 @@ test('records counts the pass\'s record decisions', () => {
   assert.deepEqual(run([{ expect: { records: 2 } }], { decisions }), [])
   assert.deepEqual(run([{ expect: { records: 0 } }], { decisions }).map((x) => [x.what, x.expected, x.found]), [['records', 0, 2]])
 })
+
+test('expect.vg.donorOf names the scenario whose constituent the person is linked to', async () => {
+  const { checkScenario } = await import('../../harness/expect.js')
+  const scenario = { name: 's', phases: [{ expect: { vg: { donorOf: 'other' } } }] }
+  const p = { personId: '1', detail: {}, donor: { lglConstituentId: '22', lastGiftDate: null } }
+  const base = { scenario, phaseIndex: 0, vgPersons: [p], lglConstituent: null, passStartedAt: '2026-11-14T00:00:00Z' }
+  assert.deepEqual(checkScenario({ ...base, constituentIds: { s: 11, other: 22 } }), [])
+  const f = checkScenario({ ...base, constituentIds: { s: 22, other: 33 } })
+  assert.deepEqual(f.map((x) => [x.what, x.expected, x.found]), [['vg.donorOf', 'other (33)', 's (22)']])
+})

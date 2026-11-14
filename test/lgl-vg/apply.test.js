@@ -179,3 +179,131 @@ test('nothing to do sends no sync calls', async () => {
   await applyPlan(emptyPlan, { vg, existingHolds: [] })
   assert.deepEqual(vg.calls, [])
 })
+
+// --- unlinked donors ---
+// A VG fake with a mutable roster: createPerson adds a person, putDonor and deleteDonor change links.
+function roster({ people = [], createErr = null, donorErr = null } = {}) {
+  const calls = []
+  const byId = new Map(people.map((p) => [String(p.personId), p]))
+  let next = 500
+  const rec = (name, fn) => async (...a) => { calls.push([name, ...a]); return fn ? fn(...a) : undefined }
+  return {
+    calls, byId,
+    getLinkedPersons: rec('getLinkedPersons', (cid) => [...byId.values()].filter((p) => String(p.donor?.lglConstituentId) === String(cid))),
+    listPersons: rec('listPersons', () => [...byId.values()]),
+    createPerson: rec('createPerson', (body) => {
+      if (createErr) throw Object.assign(new Error('refused'), { status: createErr })
+      const p = person({ personId: String(next++), donor: null, email: body.email ?? null })
+      byId.set(p.personId, p)
+      return p
+    }),
+    putDonor: rec('putDonor', (id, body) => {
+      if (donorErr) throw Object.assign(new Error('refused'), { status: donorErr })
+      byId.get(String(id)).donor = { lglConstituentId: body.lglConstituentId, lastGiftDate: body.lastGiftDate }
+    }),
+    deleteDonor: rec('deleteDonor', (id) => { byId.get(String(id)).donor = null; return null }),
+    geocodeTown: rec('geocodeTown', () => ({ town: 'Springfield' })),
+    putSyncFields: rec('putSyncFields', (rows) => rows.length),
+    createSyncHolds: rec('createSyncHolds', (items) => items.map((h, i) => ({ holdId: `n${i}`, ...h }))),
+    patchSyncHolds: rec('patchSyncHolds', (items) => items.length),
+  }
+}
+const up = (o = {}) => ({ links: [], follows: [], unlinks: [], creates: [], finishes: [], holds: [], ...o })
+const createW = { constituentId: '201', lastGiftDate: '2026-06-01', fingerprint: 'fc', body: { lastName: 'Doe', firstName: 'Jane', street: '12 Elm St', city: 'Springfield', state: 'RI', zip: '99999' }, address: { street: '12 Elm St', city: 'Springfield', state: 'RI', zip: '99999' }, agree: [{ field: 'lastName', lglConstituentId: '201', value: 'Doe', lglEntryId: null }] }
+const same = (u) => () => u // replan: the fresh read changes nothing
+
+test('a create: town, POST, create-unfinished hold, memory for the new person, donor row, then the hold closes', async () => {
+  const vg = roster()
+  const u = up({ creates: [createW] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: same(u) })
+  assert.deepEqual(names(vg), ['listPersons', 'geocodeTown', 'createPerson', 'createSyncHolds', 'putSyncFields', 'putDonor', 'patchSyncHolds'])
+  assert.equal(vg.calls[2][1].town, 'Springfield')
+  assert.deepEqual(vg.calls[3][1].map((h) => [h.reason, h.personId, h.lglConstituentId]), [['create-unfinished', '500', '201']])
+  assert.deepEqual(vg.calls[4][1], [{ personId: '500', field: 'lastName', lglConstituentId: '201', value: 'Doe', lglEntryId: null }])
+  assert.deepEqual(vg.calls[5].slice(1), ['500', { lglConstituentId: '201', lastGiftDate: '2026-06-01' }])
+  assert.deepEqual(vg.calls[6][1], [{ holdId: 'n0', state: 'closed' }])
+  assert.equal(r.counts.unlinked.created, 1)
+})
+
+test('a donor row refused after the create leaves the create-unfinished hold open', async () => {
+  const vg = roster({ donorErr: 422 })
+  const u = up({ creates: [createW] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: same(u) })
+  assert.equal(names(vg).filter((n) => n === 'patchSyncHolds').length, 0)
+  assert.equal(r.counts.unlinked.refused, 1)
+  const opened = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1]).map((h) => h.reason)
+  assert.deepEqual(opened, ['create-unfinished', 'vg-refused'])
+})
+
+test('a refused create opens a vg-refused hold on the constituent and the pass carries on', async () => {
+  const vg = roster({ createErr: 400 })
+  const u = up({ creates: [createW] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: same(u) })
+  const opened = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
+  assert.deepEqual(opened.map((h) => [h.reason, h.lglConstituentId, h.personId, h.fingerprint]), [['vg-refused', '201', null, 'fc']])
+  assert.equal(r.counts.unlinked.refused, 1)
+})
+
+test('a create or link the fresh plan no longer makes is skipped as stale', async () => {
+  const vg = roster({ people: [person({ personId: '7', donor: null })] })
+  const u = up({ creates: [createW], links: [{ personId: '7', constituentId: '202', lastGiftDate: null, fingerprint: 'fl' }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: () => up() })
+  assert.deepEqual(names(vg), ['listPersons'])
+  assert.equal(r.counts.unlinked.stale, 2)
+})
+
+test('a link writes the donor row', async () => {
+  const vg = roster({ people: [person({ personId: '7', donor: null })] })
+  const u = up({ links: [{ personId: '7', constituentId: '202', lastGiftDate: '2026-06-01', fingerprint: 'fl' }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: same(u) })
+  assert.deepEqual(vg.byId.get('7').donor, { lglConstituentId: '202', lastGiftDate: '2026-06-01' })
+  assert.equal(r.counts.unlinked.linked, 1)
+})
+
+test('an unlink deletes the donor row and opens an unlinked notice; a follow repoints it; both re-read first', async () => {
+  const vg = roster({ people: [person({ personId: '7' }), person({ personId: '8', donor: { lglConstituentId: '150', lastGiftDate: null } })] })
+  const u = up({
+    unlinks: [{ personId: '7', constituentId: '101', reason: 'lgl-missing' }],
+    follows: [{ personId: '8', constituentId: '201', from: '150', lastGiftDate: '2026-06-01', fingerprint: 'ff' }],
+  })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: same(u) })
+  assert.equal(vg.byId.get('7').donor, null)
+  assert.deepEqual(vg.byId.get('8').donor, { lglConstituentId: '201', lastGiftDate: '2026-06-01' })
+  const opened = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
+  assert.deepEqual(opened.map((h) => [h.reason, h.personId, h.lglConstituentId, h.detail]), [['unlinked', '7', '101', { why: 'lgl-missing' }]])
+  assert.deepEqual([r.counts.unlinked.unlinked, r.counts.unlinked.followed], [1, 1])
+  assert.equal(names(vg).includes('listPersons'), false) // nothing to link or create: no fresh read
+})
+
+test('an unlink whose person was relinked since the read is stale', async () => {
+  const vg = roster({ people: [person({ personId: '7', donor: { lglConstituentId: '999', lastGiftDate: null } })] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: up({ unlinks: [{ personId: '7', constituentId: '101', reason: 'lgl-missing' }] }) }, { vg })
+  assert.equal(names(vg).includes('deleteDonor'), false)
+  assert.equal(r.counts.unlinked.stale, 1)
+})
+
+test('a finish writes the donor row and lets its create-unfinished hold close', async () => {
+  const h = { holdId: '9', lglConstituentId: '201', personId: '7', field: null, reason: 'create-unfinished', fingerprint: 'cu', detail: null, state: 'open' }
+  const vg = roster({ people: [person({ personId: '7', donor: null })] })
+  const u = up({ finishes: [{ holdId: '9', personId: '7', constituentId: '201', lastGiftDate: '2026-06-01', hold: h }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, existingHolds: [h], replan: same(u) })
+  assert.equal(r.counts.unlinked.finished, 1)
+  assert.deepEqual(vg.calls.filter((c) => c[0] === 'patchSyncHolds').flatMap((c) => c[1]), [{ holdId: '9', state: 'closed' }])
+})
+
+test('a follow whose new record was linked to someone since the read is stale', async () => {
+  const vg = roster({ people: [person({ personId: '8', donor: { lglConstituentId: '150', lastGiftDate: null } }), person({ personId: '9', donor: { lglConstituentId: '201', lastGiftDate: null } })] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: up({ follows: [{ personId: '8', constituentId: '201', from: '150', lastGiftDate: null, fingerprint: 'ff' }] }) }, { vg })
+  assert.equal(names(vg).includes('putDonor'), false)
+  assert.equal(r.counts.unlinked.stale, 1)
+})
+
+test('a refused finish keeps its create-unfinished hold open and opens no other', async () => {
+  const h = { holdId: '9', lglConstituentId: '201', personId: '7', field: null, reason: 'create-unfinished', fingerprint: 'cu', detail: null, state: 'open' }
+  const vg = roster({ people: [person({ personId: '7', donor: null })], donorErr: 422 })
+  const u = up({ finishes: [{ holdId: '9', personId: '7', constituentId: '201', lastGiftDate: null, hold: h }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, existingHolds: [h], replan: () => u })
+  assert.equal(r.counts.unlinked.refused, 1)
+  assert.deepEqual(vg.calls.filter((c) => c[0] === 'createSyncHolds'), [])
+  assert.deepEqual(vg.calls.filter((c) => c[0] === 'patchSyncHolds').flatMap((c) => c[1]), [{ holdId: '9', seen: true }])
+})

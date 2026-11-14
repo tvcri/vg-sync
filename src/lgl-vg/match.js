@@ -2,6 +2,19 @@
 // Ported 2026-11-11: normalizing and indexes from vg-utils/lgl-import/count.js (lines 41-64);
 // nearDuplicates test and its helpers from vg-utils/lgl-import/src/suggest.js (lines 55-91).
 // When in doubt the rule is hold: a wrong link or a duplicate person must never happen.
+import { createHash } from 'node:crypto'
+
+// Every reason matching can hold a donor for. Holds with these reasons and no personId belong to step 4.
+export const MATCH_REASONS = new Set([
+  'anonymous', 'deceased-in-lgl', 'couple-name', 'no-last-name', 'already-linked-elsewhere', 'multiple-matches',
+  'shared-email-different-name', 'name-only', 'same-address-last-name', 'before-horizon', 'duplicate-in-lgl',
+])
+
+// The facts behind an unlinked donor's hold: its reason, the VG people it matched, and LGL's last gift date.
+// A dismissal by rule is reconsidered when any of them changes.
+export const unlinkedFingerprint = (reason, candidates, lastGiftDate) => createHash('sha256')
+  .update(JSON.stringify(['unlinked', reason, [...candidates].map(String).sort(), lastGiftDate ?? null]))
+  .digest('hex').slice(0, 32)
 
 const norm = (s) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toLowerCase().replace(/[.,']/g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
@@ -51,7 +64,8 @@ const sameFirst = (a, b) => {
     (Math.min(x.length, y.length) >= 4 && lev(x, y) <= 1)
 }
 
-const hold = (constituentId, reason) => ({ constituentId, outcome: 'hold', reason })
+const ids = (infos) => [...new Set([...infos].map((p) => String(p.person.personId)))].sort()
+const hold = (constituentId, reason, candidates = []) => ({ constituentId, outcome: 'hold', reason, candidates: ids(candidates) })
 
 function horizonCutoff(today, horizonYears) {
   const [y, m, d] = today.split('-').map(Number)
@@ -75,7 +89,10 @@ function indexPersons(persons) {
 
 const union = (sets) => new Set(sets.flatMap((s) => (s ? [...s] : [])))
 
-export function matchUnlinked(donors, persons, { today, horizonYears }) {
+// exclude: constituent ids left alone (a staff dismissal, an open import hold, an unfinished create).
+// They are not matched and cannot make another donor's link a duplicate, but a donor that looks like one
+// of them is still held: a look-alike of a record staff skipped is no safer to create.
+export function matchUnlinked(donors, persons, { today, horizonYears, exclude = new Set() }) {
   const idx = indexPersons(persons)
   const cutoff = horizonCutoff(today, horizonYears)
   const info = new Map() // constituentId -> facts used by the second pass
@@ -86,6 +103,7 @@ export function matchUnlinked(donors, persons, { today, horizonYears }) {
     const zip = (addr?.zip5 || addr?.postal_code) ?? ''
     const emails = (c.email_addresses ?? []).filter((e) => !e.not_current).map((e) => emailKey(e.address)).filter(Boolean)
     info.set(id, { c, zip5: zip.trim().slice(0, 5), emails })
+    if (exclude.has(String(id))) return { constituentId: id, outcome: 'skip', reason: 'left-alone' }
 
     if (/\banonymous\b/i.test(c.first_name ?? '') || /\banonymous\b/i.test(c.last_name ?? '')) return hold(id, 'anonymous')
     if (c.is_deceased) return hold(id, 'deceased-in-lgl')
@@ -98,14 +116,15 @@ export function matchUnlinked(donors, persons, { today, horizonYears }) {
     const EN = [...E].filter((p) => N.has(p))
     if (EN.length === 1) {
       const p = EN[0].person
-      if (p.donor && String(p.donor.lglConstituentId) !== String(id)) return hold(id, 'already-linked-elsewhere')
+      if (p.donor && String(p.donor.lglConstituentId) !== String(id)) return hold(id, 'already-linked-elsewhere', EN)
       return { constituentId: id, outcome: 'link', reason: 'email-and-name', personId: p.personId }
     }
-    if (EN.length > 1) return hold(id, 'multiple-matches')
-    if (E.size) return hold(id, 'shared-email-different-name')
-    if (N.size) return hold(id, 'name-only')
+    if (EN.length > 1) return hold(id, 'multiple-matches', EN)
+    if (E.size) return hold(id, 'shared-email-different-name', E)
+    if (N.size) return hold(id, 'name-only', N)
     const key = addrKey(addr?.street, zip)
-    if (key && last && idx.list.some((p) => p.last === last && p.addr === key)) return hold(id, 'same-address-last-name')
+    const sameAddr = key && last ? idx.list.filter((p) => p.last === last && p.addr === key) : []
+    if (sameAddr.length) return hold(id, 'same-address-last-name', sameAddr)
     if (!lastGiftDate || lastGiftDate < cutoff) return hold(id, 'before-horizon')
     return { constituentId: id, outcome: 'create', reason: 'new' }
   })
@@ -113,7 +132,8 @@ export function matchUnlinked(donors, persons, { today, horizonYears }) {
   // Pass 1: two links to one person.
   const linkCount = new Map()
   for (const d of decisions) if (d.outcome === 'link') linkCount.set(d.personId, (linkCount.get(d.personId) ?? 0) + 1)
-  let out = decisions.map((d) => (d.outcome === 'link' && linkCount.get(d.personId) > 1 ? hold(d.constituentId, 'duplicate-in-lgl') : d))
+  const dupHold = (d) => ({ constituentId: d.constituentId, outcome: 'hold', reason: 'duplicate-in-lgl', candidates: [String(d.personId)] })
+  let out = decisions.map((d) => (d.outcome === 'link' && linkCount.get(d.personId) > 1 ? dupHold(d) : d))
 
   // Pass 2: new donors that look like another donor entered twice (whatever that donor's own decision).
   const all = donors.map(({ constituent: c }) => info.get(c.id))

@@ -100,7 +100,7 @@ test('write run: startRun, writes, finishRun ok with a cursor five minutes befor
   assert.equal(fin[2].lglCursor, '2026-11-10T11:55:00.000Z')
   assert.equal(fin[2].vgCursor, null)
   assert.equal(fin[2].counts.constituents, 1)
-  assert.match(f.out.at(-1), /^PASS OK full write-vg people=1 writes=1 stale=0 refused=0 deferred=0 holdsOpened=0 holdsClosed=0 holdsOpen=0$/)
+  assert.match(f.out.at(-1), /^PASS OK full write-vg people=1 writes=1 stale=0 refused=0 deferred=0 links=0 creates=0 unlinks=0 holdsOpened=0 holdsClosed=0 holdsOpen=0$/)
   assert.ok(f.files[0].text.includes('"outcome":"written"'))
 })
 
@@ -187,4 +187,50 @@ test('a dismissed vg-refused hold on the planned write: not written, not reopene
   assert.ok(!f.names().includes('createSyncHolds'))
   assert.ok(!f.calls.some((c) => c[0] === 'patchSyncHolds' && c[1].some((x) => x.state === 'open')))
   assert.equal(f.calls.find((c) => c[0] === 'finishRun')[2].counts.apply.holds.stillDismissed, 1)
+})
+
+// --- unlinked donors in the pass ---
+function unlinkedWorld() {
+  // 101 linked and agreeing; 102 an unlinked donor matching person 8 by email and name; 103 new to VG
+  const w = world(1, 0)
+  const c2 = con(102, { email_addresses: [{ id: 21, address: 'ann@example.org', is_preferred: true }], first_name: 'Ann', last_name: 'Roe' })
+  const c3 = con(103, { email_addresses: [{ id: 31, address: 'cy@example.org', is_preferred: true }], first_name: 'Cy', last_name: 'Poe', street_addresses: [] })
+  const p8 = { ...per(8, 0), email: 'ann@example.org', donor: null, detail: { ...per(8, 0).detail, firstName: 'Ann', lastName: 'Roe' } }
+  return { ...w, constituents: [...w.constituents, c2, c3], gifts: [...w.gifts, gift(102), gift(103)], persons: [...w.persons, p8] }
+}
+
+test('dry run: a link and a create are planned, counted as people, and printed', async () => {
+  const f = fakes({ w: unlinkedWorld() })
+  assert.equal(await runFullPass(f.args()), 0)
+  assert.match(f.out.at(-1), /^PASS OK full dry-run people=2 writes=2 .* links=1 creates=1 unlinks=0 /)
+  const lines = f.files[0].text.trim().split('\n').map((l) => JSON.parse(l))
+  assert.deepEqual(lines.filter((d) => d.kind === 'unlinked').map((d) => [d.constituentId, d.action, d.outcome]), [['102', 'link', 'write-vg'], ['103', 'create', 'write-vg']])
+})
+
+test('write run: links and creates after one fresh read of every person', async () => {
+  const w = unlinkedWorld()
+  const f = fakes({ w })
+  f.vg.createPerson = async (body) => { f.calls.push(['createPerson', body]); return { personId: '900' } }
+  f.vg.createSyncHolds = async (items) => { f.calls.push(['createSyncHolds', items]); return items.map((h, i) => ({ holdId: `h${i}`, ...h })) }
+  assert.equal(await runFullPass(f.args({ writeVg: true })), 0)
+  const names = f.names()
+  assert.equal(names.filter((n) => n === 'listPersons').length, 2)
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'putDonor').map((c) => [c[1], c[2].lglConstituentId]), [['8', '102'], ['900', '103']])
+  assert.match(f.out.at(-1), /links=1 creates=1 unlinks=0 /)
+})
+
+test('the breaker counts links and creates as people changed', async () => {
+  const f = fakes({ w: unlinkedWorld() })
+  assert.equal(await runFullPass(f.args({ writeVg: true, config: { ...baseConfig, circuitBreakerPeople: 1 } })), 1)
+  assert.match(f.out.at(-1), /^PASS FAILED full The plan changes 2 people, more than the limit of 1/)
+})
+
+test('a missing constituent with policy unlink: the donor row is removed and an unlinked notice opens', async () => {
+  const w = world(1, 0)
+  const f = fakes({ w: { ...w, constituents: [], gifts: [] } })
+  f.vg.deleteDonor = async (id) => { f.calls.push(['deleteDonor', id]); return null }
+  assert.equal(await runFullPass(f.args({ writeVg: true, config: { ...baseConfig, maxConstituentDropPercent: 100 } })), 0)
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'deleteDonor').map((c) => c[1]), ['7'])
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1]).map((h) => [h.reason, h.personId]), [['unlinked', '7']])
+  assert.match(f.out.at(-1), /unlinks=1 /)
 })

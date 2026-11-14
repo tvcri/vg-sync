@@ -263,3 +263,43 @@ test('envFileFrom strips --env <file> and marks it explicit', () => {
 test('envFileFrom throws when --env has no file', () => {
   assert.throws(() => envFileFrom(['full', '--env']), /--env needs a file/)
 })
+
+const importRun = (o = {}) => JSON.stringify({
+  target: 'prod', executed: true,
+  actions: [
+    { key: '1', lglId: '1', kind: 'skip', reason: 'Staff chose Skip', lastGiftDate: '2025-06-01' }, // linked today (persons fixture)
+    { key: '2', lglId: '2', kind: 'skip', reason: 'Staff chose Skip', lastGiftDate: '2025-06-01' },
+    { key: '3', lglId: '3', kind: 'hold', reason: 'Not confirmed on the Work list', lastGiftDate: '2025-06-01' },
+  ],
+  ...o,
+})
+const withHoldPosts = (h) => {
+  const posted = []
+  const inner = h.deps.fetchImpl
+  h.deps.fetchImpl = async (url, init = {}) => {
+    if (init.method === 'POST' && new URL(url).pathname === '/api/sync/holds') posted.push(...JSON.parse(init.body))
+    return inner(url, init)
+  }
+  return posted
+}
+
+test('seed-import: dry by default, prints counts only, loads nothing', async () => {
+  const h = harness({ lgl: false, files: { run: importRun() } })
+  const posted = withHoldPosts(h)
+  assert.equal(await run(['seed-import', '--file', 'run'], h.deps), 0)
+  assert.deepEqual(posted, [])
+  assert.match(h.out.at(-1), /^SEED OK dry-run loaded=0 planned=2$/)
+})
+
+test('seed-import --write-vg posts the holds; a dry-run import file or no --file is refused', async () => {
+  const h = harness({ lgl: false, files: { run: importRun() } })
+  const posted = withHoldPosts(h)
+  assert.equal(await run(['seed-import', '--file', 'run', '--write-vg'], h.deps), 0)
+  assert.deepEqual(posted.map((x) => [x.lglConstituentId, x.reason, x.state]), [['2', 'import-skip', 'dismissed'], ['3', 'import-hold', 'open']])
+  assert.match(h.out.at(-1), /^SEED OK write-vg loaded=2 planned=2$/)
+
+  const dry = harness({ lgl: false, files: { run: importRun({ executed: false }) } })
+  assert.equal(await run(['seed-import', '--file', 'run', '--write-vg'], dry.deps), 1)
+  assert.match(dry.out.at(-1), /^SEED FAILED .*dry run of the import/)
+  assert.equal(await run(['seed-import'], harness().deps), 2)
+})

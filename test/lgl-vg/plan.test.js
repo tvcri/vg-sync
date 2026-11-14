@@ -358,10 +358,10 @@ test('last gift date: a newer gift is a donor write, the same date nothing', () 
   assert.deepEqual(plan({ memory }).writes, [])
 })
 
-test('records: a missing constituent is deferred (unlink), one no longer a donor is held', () => {
+test('records: a missing constituent is unlinked (planUnlinked decides unlink or follow), one no longer a donor is held', () => {
   const missing = plan({ constituents: [] })
-  assert.deepEqual(missing.decisions.map((d) => [d.kind, d.action, d.outcome, d.note]), [['record', 'unlink', 'deferred', 'lgl-missing']])
-  assert.deepEqual([missing.writes, missing.holds, missing.agree], [[], [], []])
+  assert.deepEqual(missing.unlinks, [{ personId: '7', constituentId: '101', reason: 'lgl-missing' }])
+  assert.deepEqual([missing.decisions, missing.writes, missing.holds, missing.agree], [[], [], [], []])
   assert.equal(missing.counts.pairs, 0)
 
   const lapsed = plan({ gifts: [], memory: agreedAt(con()), persons: [per({ donor: { lglConstituentId: '101', lastGiftDate: null } })] })
