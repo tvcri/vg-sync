@@ -209,6 +209,31 @@ test('the unclean guard holds a merge too: an unclean LGL phone never-agreed wit
   assert.equal(p.writes.length, 0)
 })
 
+test('an unclean hold carries LGL\'s raw value, and a different unclean value gives a different fingerprint', () => {
+  const bad = (address) => plan({
+    constituents: [con({ email_addresses: [{ id: 11, address, is_preferred: true }] })],
+    memory: agreedAt(con()),
+  }).holds[0]
+  const a = bad('jane@')
+  const b = bad('jane@example')
+  assert.equal(a.reason, 'unclean')
+  assert.equal(a.detail.lgl, 'jane@')
+  assert.equal(b.detail.lgl, 'jane@example')
+  assert.notEqual(a.fingerprint, b.fingerprint)
+  assert.equal(bad('jane@').fingerprint, a.fingerprint)
+})
+
+test('malformed takes priority: an unclean never-agreed email with VG empty is held unclean, not never-agreed', () => {
+  const p = plan({
+    constituents: [con({ email_addresses: [{ id: 11, address: 'jane@', is_preferred: true }] })],
+    persons: [per({ email: null })],
+  })
+  assert.deepEqual(p.holds.map((h) => [h.field, h.reason]), [['email', 'unclean']])
+  assert.equal(p.holds[0].detail.case, 'never-agreed')
+  assert.equal(p.holds[0].detail.lgl, 'jane@')
+  assert.equal(p.writes.length, 0)
+})
+
 test('an ambiguous LGL entry is still held whatever the policy', () => {
   const two = [{ id: 11, address: 'jane@example.org' }, { id: 13, address: 'jd@example.org' }]
   const p = plan({ constituents: [con({ email_addresses: two })] })

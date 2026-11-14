@@ -25,8 +25,8 @@ export default [
     ],
   },
   {
-    name: 'unclean-lgl-city-after-agreement-is-held-unclean',
-    why: 'The policy file, Guards (Unclean): an LGL value that fails cleaning (here a city with a digit) is never copied to VG. After agreement, LGL\'s change is lgl-changed, whose action is to-vg, so the guard holds it unclean and VG keeps its address.',
+    name: 'unclean-lgl-city-after-agreement-is-held-unclean-reopens-on-new-malformed-value',
+    why: 'The policy file, Guards (Unclean): an LGL value that fails cleaning (here a city with a digit) is never copied to VG. After agreement, LGL\'s change is lgl-changed, whose action is to-vg, so the guard holds it unclean and VG keeps its address. Dismissed, it stays quiet; the engineer\'s ruling on finding (b), 2026-11-14: a change to a different malformed value reopens it.',
     since: 3,
     ...agreeing(osgood),
     gifts: [GIFT],
@@ -38,6 +38,12 @@ export default [
         expect: { writes: 0, vg: { address: address(osgood) }, holds: [{ field: 'address', reason: 'unclean' }] },
       },
       { run: 'full', expect: { writes: 0, vg: { address: address(osgood) }, holds: [{ field: 'address', reason: 'unclean' }] } },
+      { edit: { dismiss: { field: 'address', reason: 'unclean', dismissalKind: 'staff' } }, run: 'full', expect: { writes: 0, holds: [{ field: 'address', reason: 'unclean', state: 'dismissed' }] } },
+      {
+        edit: { lgl: { entries: { street_addresses: { street: osgood.street, city: 'Warwick 9', state: 'RI', postal_code: osgood.zip } } } },
+        run: 'full',
+        expect: { writes: 0, vg: { address: address(osgood) }, holds: [{ field: 'address', reason: 'unclean' }] },
+      },
     ],
   },
   {

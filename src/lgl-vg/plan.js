@@ -93,6 +93,9 @@ export function planLinked({ constituents, gifts, persons, memory, refusals, pol
     for (const f of FIELDS) {
       const lglValue = lgl.values[f]
       const lglC = comparable(f, lglValue)
+      const unclean = lgl.problems[f] === 'unclean'
+      // An unclean value's comparable form is '', so its fingerprint is built from the raw value instead.
+      const lglFp = unclean ? { unclean: lgl.raw[f] } : lglC
       const rows = people.map((p, i) => {
         const personId = String(p.personId)
         const m = memo.get(`${personId}|${f}`)
@@ -104,9 +107,9 @@ export function planLinked({ constituents, gifts, persons, memory, refusals, pol
           : problem === 'unclean' ? uncleanCase(vgC, agreedC)
             : compareField(lglC, vgC, agreedC)
         return {
-          vg: vgs[i][f], vgC, kase, fp: fingerprint([lglC, vgC, agreedC ?? null]),
+          vg: vgs[i][f], vgC, kase, fp: fingerprint([lglFp, vgC, agreedC ?? null]),
           d: { kind: 'field', personId, constituentId: key, field: f },
-          detail: { lgl: lglValue, vg: vgs[i][f], agreed: agreed ? agreed.value : null },
+          detail: { lgl: unclean ? lgl.raw[f] : lglValue, vg: vgs[i][f], agreed: agreed ? agreed.value : null },
         }
       })
       // Couples are decided as a unit: can a shared to-vg go ahead, and does anything hold?
@@ -114,8 +117,10 @@ export function planLinked({ constituents, gifts, persons, memory, refusals, pol
 
       for (const r of rows) {
         const { d, kase } = r
+        // A malformed LGL value takes priority over any other reason to hold the field.
+        const why = (reason) => (unclean ? 'unclean' : reason)
         const held = (reason) => hold({ ...d, case: kase, action: 'hold', lgl: lglValue, vg: r.vg },
-          { reason, fingerprint: r.fp, detail: { ...r.detail, ...(kase ? { case: kase } : {}) } })
+          { reason: why(reason), fingerprint: r.fp, detail: { ...r.detail, ...(kase ? { case: kase } : {}) } })
         const problem = lgl.problems[f]
         if (problem === 'ambiguous') { tally(f, problem); held(problem); continue }
         // Guards, Unclean: an unclean LGL value is never copied to VG; a copy from VG that would repair it goes ahead.
@@ -134,7 +139,7 @@ export function planLinked({ constituents, gifts, persons, memory, refusals, pol
         }
         const action = policy.fieldAction(f, kase)
         const dec = { ...d, case: kase, action, lgl: lglValue, vg: r.vg }
-        const policyHold = (reason) => hold(dec, { reason, fingerprint: r.fp, detail: { ...r.detail, case: kase } })
+        const policyHold = (reason) => hold(dec, { reason: why(reason), fingerprint: r.fp, detail: { ...r.detail, case: kase } })
         const toVg = (value, agreeRow) => write(dec, { value, fp: r.fp, expect: r.vgC, agreeRow })
         // toward-deceased copies only a deceased mark LGL has and VG lacks; the other direction waits
         const copies = action === 'to-vg' || (action === 'toward-deceased' && lglValue.flag && !r.vg.flag)

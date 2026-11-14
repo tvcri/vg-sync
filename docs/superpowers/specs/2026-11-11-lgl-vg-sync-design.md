@@ -521,7 +521,12 @@ before the policy lookup, and each produces a hold:
   differing from every clean one, so the case is `never-agreed`, `lgl-changed`
   or `both-changed` as usual. The first code held `unclean` for any action,
   against this text; the harness's step 3 scenarios found it and the code was
-  fixed to match (2026-11-13).
+  fixed to match (2026-11-13). When the field is held for any reason while
+  LGL's value is unclean, the reason is `unclean`, with the case kept in the
+  detail: malformed takes priority. The hold's detail shows LGL's value as
+  stored, and its fingerprint is built from that raw value, so a change from
+  one malformed value to another reopens a dismissed hold (the engineer's
+  rulings on findings (b) and (c), 2026-11-14).
 - **Ambiguous entry.** LGL has more than one current entry of a kind and
   none is marked preferred (see "LGL's lists").
 - **Couple.** See "Couples".
@@ -1000,16 +1005,21 @@ the engineer's decision, and none is a business rule for the customer.
   is permanent ("Staff decisions are not undone"), which nothing loads yet.
   The app's code allows `dismissed` to `open` for any dismissal kind, so only
   its text needs to change. Noted on the board item (2026-11-14).
-- **Unclean values share one fingerprint.** An unclean LGL value's
-  comparable form is `''`, so the hold's fingerprint is the same for every
-  unclean value. A change from one unclean value to another does not reopen a
-  dismissed `unclean` hold. Existing behavior, not new.
-- **A never-agreed unclean email hides itself.** When LGL's email is unclean,
-  VG's is empty and the pair has never agreed, the action is `to-lgl-else-hold`
-  and the hold is `never-agreed`. Nothing in it says LGL's value is
-  malformed. Consider an unclean flag in the hold's detail. A related effect
-  of the guard fix: an open `unclean` hold on a case whose action goes
-  `to-lgl` closes on the next pass, which is intended.
+- **Unclean values share one fingerprint. Settled 2026-11-14: reopen.** An
+  unclean LGL value's comparable form is `''`, so the fingerprint was the
+  same for every unclean value, and the hold's detail showed LGL as empty.
+  The engineer ruled that a new malformed value reopens a dismissed hold. The
+  fingerprint and detail now use LGL's raw value (Guards, Unclean); the
+  harness scenario `unclean-lgl-city-after-agreement-is-held-unclean-reopens-on-new-malformed-value`
+  shows it live.
+- **A never-agreed unclean email hid itself. Settled 2026-11-14: malformed
+  takes priority.** When LGL's email was unclean, VG's empty and the pair
+  had never agreed, the hold was `never-agreed`. It is now `unclean`, with
+  the case in the detail. A unit test covers it; the trial account can't
+  produce it, because LGL's API stores a malformed email as not current,
+  which the sync ignores. A related effect of the guard fix: an open
+  `unclean` hold on a case whose action goes `to-lgl` closes on the next
+  pass, which is intended.
 - **(d) A verification rewrite can replace a correct VG address.** LGL's
   sweep can change an address's city or ZIP (see "On the trial account"). The
   next LGL check sees it as `lgl-changed`, and policy copies it to VG without

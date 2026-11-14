@@ -42,30 +42,37 @@ export function lglFields (c) {
   }
   const entryIds = { address: null, email: null, phone: null, cell: null }
   const problems = {}
+  // LGL's value as stored, for a field that failed cleaning: shown in the hold and fingerprinted,
+  // so a change from one malformed value to another is seen.
+  const raw = {}
   const slots = { phone: null, cell: null }
+  const rawSlots = { phone: null, cell: null }
   const slotProblems = []
 
   const lists = [
-    ['address', c.street_addresses, lglAddress],
-    ['email', c.email_addresses, (e) => { const v = String(e.address ?? '').trim(); return EMAIL.test(v) ? v : null }],
-    ['phone', (c.phone_numbers ?? []).filter((p) => !isMobile(p)), formatPhone],
-    ['cell', (c.phone_numbers ?? []).filter(isMobile), formatPhone],
+    ['address', c.street_addresses, lglAddress, (a) => ({ street: a.street ?? null, city: a.city ?? null, state: a.state ?? null, zip: a.zip5 || a.postal_code || null })],
+    ['email', c.email_addresses, (e) => { const v = String(e.address ?? '').trim(); return EMAIL.test(v) ? v : null }, (e) => e.address ?? null],
+    ['phone', (c.phone_numbers ?? []).filter((p) => !isMobile(p)), formatPhone, (p) => p.number ?? null],
+    ['cell', (c.phone_numbers ?? []).filter(isMobile), formatPhone, (p) => p.number ?? null],
   ]
-  for (const [field, list, convert] of lists) {
+  for (const [field, list, convert, rawOf] of lists) {
     const { entry, ambiguous } = pick(list)
     const slot = field === 'phone' || field === 'cell'
     const fail = (kind) => { if (slot) slotProblems.push(kind); else problems[field] = kind }
     if (ambiguous) { fail('ambiguous'); continue }
     if (!entry) continue
     const v = convert(entry)
-    if (v == null) { fail('unclean'); continue }
+    if (slot) rawSlots[field] = rawOf(entry)
+    if (v == null) { fail('unclean'); if (!slot) raw[field] = rawOf(entry); continue }
     if (slot) slots[field] = v
     else values[field] = v
     entryIds[field] = entry.id
   }
-  if (slotProblems.length) problems.phones = slotProblems.includes('ambiguous') ? 'ambiguous' : 'unclean'
-  else values.phones = slots
-  return { values, entryIds, problems }
+  if (slotProblems.length) {
+    problems.phones = slotProblems.includes('ambiguous') ? 'ambiguous' : 'unclean'
+    if (problems.phones === 'unclean') raw.phones = rawSlots
+  } else values.phones = slots
+  return { values, entryIds, problems, raw }
 }
 
 export function vgFields (p) {
