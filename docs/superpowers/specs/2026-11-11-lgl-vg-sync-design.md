@@ -184,9 +184,9 @@ What this means for the design:
   by design: it is a real change of value. For a real donor, an address the
   sync sends to LGL at step 7, or any address staff save in LGL, can be
   rewritten by the sweep about eleven minutes later. After agreement that is
-  an `lgl-changed` case, and policy copies it to VG, so a wrong
-  neighbouring-town rewrite would replace a correct VG address with nothing
-  flagging it (see "Findings for the engineer", item d). Not yet seen: how
+  an `lgl-changed` case, and policy copies it to VG. That is intended: a
+  rewrite to the proper post office town and ZIP is what VG should hold
+  (the engineer's ruling on finding (d), 2026-11-14). Not yet seen: how
   verification writes a unit.
 - **An address LGL could not verify is visible:** `verified_on` set with
   `verified` false. It is a candidate for a hold or a staff list, not a
@@ -958,8 +958,8 @@ Two checks remain and must not be forgotten:
   trial account (2026-11-12 and 13): every verified address is rewritten
   within about eleven minutes, suffix abbreviated, and the city and ZIP can
   change too (see "On the trial account"). Still to map: units, directionals,
-  and other suffixes. Still to decide: what the sync does with a rewrite
-  that changes city or ZIP (Findings for the engineer, item d).
+  and other suffixes. A rewrite that changes city or ZIP is copied to VG
+  (Findings for the engineer, item d, settled).
 
 ## For the customer
 
@@ -994,8 +994,8 @@ questions 2 and 3 do that.
 
 ## Findings for the engineer
 
-Found while building the harness (2026-11-13). None is settled; each needs
-the engineer's decision, and none is a business rule for the customer.
+Found while building the harness (2026-11-13). All four were settled by the
+engineer on 2026-11-14.
 
 - **The app's dismissal text overstates permanence.** The app's OpenAPI
   text for `POST /sync/holds/{holdId}/dismissal` says "A staff dismissal is
@@ -1020,14 +1020,15 @@ the engineer's decision, and none is a business rule for the customer.
   which the sync ignores. A related effect of the guard fix: an open
   `unclean` hold on a case whose action goes `to-lgl` closes on the next
   pass, which is intended.
-- **(d) A verification rewrite can replace a correct VG address.** LGL's
-  sweep can change an address's city or ZIP (see "On the trial account"). The
-  next LGL check sees it as `lgl-changed`, and policy copies it to VG without
-  any flag. Unsettled; options, none chosen: hold when a verified rewrite
-  changes the city or ZIP; do not copy a change whose only source is
-  verification, which `verified_on` moving would reveal; or accept it. Which
-  system wins for a verification rewrite is partly a customer business rule,
-  so this may belong on the customer list.
+- **(d) A verification rewrite changes VG's town or ZIP. Settled
+  2026-11-14: accept it.** LGL's sweep can change an address's city or ZIP
+  (see "On the trial account"). The next LGL check sees it as
+  `lgl-changed`, and policy copies it to VG. The engineer ruled this is not
+  a problem: a rewrite to the proper post office town and ZIP is what VG
+  should hold. The customer has no expectation that a member's town matches
+  their village's name. LGL's dedup and address verification stay on; the
+  engineer considered turning them off and kept them, since the design
+  already works around both.
 
 ## Left to the builder
 
