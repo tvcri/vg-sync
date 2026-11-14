@@ -1018,7 +1018,7 @@ unattended in production.
    breaker's among them). They replace the paused write run.
 4. **Unlinked donors.** Linking and creating, and the one-time load of the
    import's decisions. **Done 2026-11-14:** 19 step 4 scenarios pass, and
-   the full set of 38 (branch `lgl-vg-step4`). Dry run on the production
+   the full set of 38. Dry run on the production
    snapshot of 2026-11-14 with production LGL reads: the seed loaded 199
    holds (55 staff skips, 140 old last gifts, 4 import holds); the pass found
    199 unlinked donors, all of them seeded; 138 of the 140 old-gift holds
