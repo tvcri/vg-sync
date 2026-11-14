@@ -374,6 +374,26 @@ the guards' decisions) get unit tests in `npm test`.
 - **The step 3 write run** that was paused is replaced by the first
   scenario set. Step 3 is done when its scenarios pass.
 
+## Rulings made during the build
+
+Decisions the agent made while building the harness (2026-11-13), with what
+each costs if it proves wrong. The engineer has seen the list; none is
+reversed.
+
+| # | Ruling | Where | Cost if wrong |
+|---|---|---|---|
+| R1 | Each pass runs with every variable named in `.env.harness.example` removed from its inherited environment, so a production key exported in the shell cannot reach it. | `serviceEnv` in `harness/vg-db.js`; "Guards" | None; a margin of safety. |
+| R2 | The exact LGL field names found by discovery are written into this design. | "Left to the builder" | Later code guesses at them. |
+| R3 | A fixed list of scenario and phase keys; any other key is refused at load. | `SCENARIO_KEYS`, `PHASE_KEYS` in `harness/scenario.js` | A new key has to be added there. |
+| R4 | A hold whose `firstSeenAt` is at or after the pass's start counts as opened by that pass. | `passStartedAt` in `harness/expect.js` | A reopened hold keeps its old `firstSeenAt`, so the "undisturbed" check misses it. |
+| R5 | On the trial account, Credit Card stands in for PayPal; ordinary gifts use Check or Cash. | "Left to the builder" | An ordinary card gift into the stand-in fund would count as dues. |
+| R6 | `passFails` (a pass expected to exit non-zero) only in a `runAlone` scenario. | "Scenarios" | A failing pass can't share a run with others. |
+| R7 | `wait: 'overnight'` saves state and stops; `--resume` continues. | "Scenarios", "The runner" | Rework when the first overnight scenario is written. |
+| R8 | A scenario failing only in `known` phases reports `KNOWN` and does not fail the run. | "Scenarios" | A one-line change makes them fail. |
+| R9 | The unclean guard holding a to-LGL case was a sync bug, fixed to match the sync design's text. | `COPIES_TO_VG` in `src/lgl-vg/plan.js` | The design text changes instead and the fix is reverted. |
+| R10 | The dismissed-hold scenario asserts reopen-on-change; the app's "permanent" text was a finding. | `harness/scenarios/holds.js` | Settled 2026-11-14: the design was right; the app's text is noted on the board item. |
+| R11 | Git history with real street addresses was left for the engineer. | — | Settled 2026-11-14: the branch was squash-merged, so `main` holds none. |
+
 ## Left to the builder
 
 - The harness marker on LGL records (see "Guards").

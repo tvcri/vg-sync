@@ -8,12 +8,13 @@ A headless service that keeps three systems in step for Village Green (VG):
 
 It runs unattended on a schedule. No staff interaction, no UI.
 
-**Status (2026-11-11): nothing is built, and there is no design document
-yet.** This repo holds only this file, a README stub and a context brief. The
-first job in a new session is the design for the LGL ↔ VG executable, not
-code. Read `docs/context-2026-11-11.md` before proposing anything: it records
-what is already decided (a good deal), what was learned the hard way, the
-questions out with the customer, and the engineering questions still open.
+**Status (2026-11-14): LGL ↔ VG steps 1 to 3 are built, with a test
+harness; step 4 is next.** Start with the latest `docs/handoff-*.md`. The
+design is `docs/superpowers/specs/2026-11-11-lgl-vg-sync-design.md` (its
+"Build order" lists the seven steps; there is one go-live, after step 7). The
+harness design is `docs/superpowers/specs/2026-11-13-test-harness-design.md`.
+`docs/context-2026-11-11.md` is the founding brief, now history. The VG →
+Mailchimp executable comes after LGL ↔ VG.
 
 **The engineer does not decide business rules.** Which system wins a
 conflict, who gets mailed, what deceased means for a record: those are the
@@ -67,8 +68,12 @@ as they are.
   before a long run, in case the user has started it already. Mask real
   names, emails and numbers when reading output back; never paste them into
   the repo.
-- **Test databases are restored production snapshots**, so "test" means real
-  data. Partial writes to them are not precious; the snapshot can be reapplied.
+- **The dev VG database holds the harness's invented data** (the demo data
+  generator, reseeded on every harness run). A dry run against real data
+  needs a production snapshot restored there first (`vg-utils/mysql-dump`);
+  a restored snapshot is real data. Partial writes to either are not
+  precious; both can be reapplied. Leave the demo stack (`village-green-demo-*`,
+  database port 60002) alone.
 - **Every write path is dry-run by default** in the existing tooling. Keep
   that habit here.
 - **Never pipe a long run through `tail`.** Stream it or `tee` it.
