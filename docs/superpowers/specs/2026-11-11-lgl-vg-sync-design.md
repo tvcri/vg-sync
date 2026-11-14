@@ -992,14 +992,14 @@ questions 2 and 3 do that.
 Found while building the harness (2026-11-13). None is settled; each needs
 the engineer's decision, and none is a business rule for the customer.
 
-- **A staff dismissal: permanent, or reopened?** The app's OpenAPI text for
-  `POST /sync/holds/{holdId}/dismissal` says "A staff dismissal is
-  permanent". Both designs, and the sync, reopen a dismissed hold when the
-  values it saw change (the sync design: a refused write is not retried
-  while the values are unchanged, "whether the hold is open or dismissed";
-  the harness design: "dismissed, it stays quiet; changed, it reopens"). The
-  app's code allows `dismissed` to `open` for any dismissal kind. Either the
-  app's text changes to match, or the designs and the sync change.
+- **The app's dismissal text overstates permanence.** The app's OpenAPI
+  text for `POST /sync/holds/{holdId}/dismissal` says "A staff dismissal is
+  permanent". This design has two rules: a dismissed field hold stays
+  dismissed only until either value changes ("Holds on fields"), which the
+  sync does and the harness checks; a staff decision seeded from the import
+  is permanent ("Staff decisions are not undone"), which nothing loads yet.
+  The app's code allows `dismissed` to `open` for any dismissal kind, so only
+  its text needs to change. Noted on the board item (2026-11-14).
 - **Unclean values share one fingerprint.** An unclean LGL value's
   comparable form is `''`, so the hold's fingerprint is the same for every
   unclean value. A change from one unclean value to another does not reopen a
