@@ -1,0 +1,15 @@
+{
+  "name": "vg-sync",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test",
+    "report": "node src/lgl-vg/main.js report",
+    "full": "node src/lgl-vg/main.js full",
+    "setup": "node src/lgl-vg/main.js setup",
+    "harness": "node harness/run.js"
+  }
+}

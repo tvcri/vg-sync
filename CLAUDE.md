@@ -55,8 +55,18 @@ as they are.
 
 ## How this repo is worked
 
-- **The user drives the runs.** Writing or fixing code is not permission to
-  run it against LGL, Mailchimp or a VG database. Hand it back.
+- **Who runs what.** The aim is to work through the build steps with little
+  interaction, so an agent runs these itself, without asking:
+  - dry runs, which read production LGL and the local dev VG database;
+  - writes to the local dev VG database, once a snapshot of it has been
+    taken (take one before the first write of a step);
+  - anything against the LGL trial account (`.env.trial`).
+
+  Production LGL writes, the production VG database and Mailchimp need the
+  user's explicit go-ahead for each run. Say what you are about to run
+  before a long run, in case the user has started it already. Mask real
+  names, emails and numbers when reading output back; never paste them into
+  the repo.
 - **Test databases are restored production snapshots**, so "test" means real
   data. Partial writes to them are not precious; the snapshot can be reapplied.
 - **Every write path is dry-run by default** in the existing tooling. Keep
