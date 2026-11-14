@@ -865,8 +865,11 @@ The same guide settles three facts:
   webhook endpoint (write only), the API, Zapier, and scheduled reports
   published to a fixed link (read only). Polling stands.
 - **Writes through the API are not logged in LGL's history** that staff see
-  ("Is data logged so user can see the history? No"). Staff looking at a
-  record in LGL will not see that the sync changed it. The sync log in VG is
+  ("Is data logged so user can see the history? No"). Confirmed on the trial
+  account (2026-11-14): LGL keeps no per-record edit history at all. The
+  record's details show only the last change, as "Updated by API User on
+  <date>", which the overnight dedup does not move. Staff can see that the
+  sync touched a record and when, not what changed. The sync log in VG is
   the only record, so a way for staff to look up a person's sync history
   belongs in the follow-up staff view. Writing an LGL note for each change is
   possible (contact reports are writable) and is a customer question if
