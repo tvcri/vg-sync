@@ -6,19 +6,38 @@
 
 const EXPIRY_MARGIN_MS = 30_000
 const BATCH = 500
+const DEFAULT_TIMEOUT_MS = 60_000
 const FORBIDDEN_HINT =
   ' (check that the service account has a role grant, a privacy acknowledgement, and the scope in VG_SCOPE)'
 
-function httpError(message, status) {
-  return Object.assign(new Error(message), { status })
+function httpError(message, status, extra = {}) {
+  return Object.assign(new Error(message), { status, ...extra })
 }
 
-export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope, fetchImpl = fetch, now = Date.now }) {
+// A refused sign-in will not get better by retrying.
+function isRefusedSignIn(status, text) {
+  if (status === 401) return true
+  return status === 400 && /invalid_client|unauthorized_client/.test(text)
+}
+
+export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope, fetchImpl = fetch, now = Date.now, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   let token = null
   let tokenExpiresAt = 0
 
+  // fetch with a deadline; an abort becomes a plain "timed out" error.
+  async function timedFetch(url, init) {
+    try {
+      return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+    } catch (err) {
+      if (err?.name === 'TimeoutError') {
+        throw new Error(`VG ${init.method} ${new URL(url).pathname} timed out after ${timeoutMs / 1000} s`)
+      }
+      throw err
+    }
+  }
+
   async function fetchToken() {
-    const res = await fetchImpl(`${oidcUrl}/protocol/openid-connect/token`, {
+    const res = await timedFetch(`${oidcUrl}/protocol/openid-connect/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -30,9 +49,15 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
     })
     if (!res.ok) {
       const text = await res.text()
-      throw httpError(`Keycloak token request → ${res.status}: ${text.slice(0, 200)}`, res.status)
+      throw httpError(`Keycloak token request → ${res.status}: ${text.slice(0, 200)}`, res.status, {
+        final: isRefusedSignIn(res.status, text),
+      })
     }
     const body = await res.json()
+    if (typeof body.access_token !== 'string' || !body.access_token) {
+      throw new Error('Keycloak token response has no access_token')
+    }
+    if (!(Number(body.expires_in) > 0)) throw new Error('Keycloak token response has no positive expires_in')
     token = body.access_token
     tokenExpiresAt = now() + body.expires_in * 1000 - EXPIRY_MARGIN_MS
   }
@@ -40,7 +65,7 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
   async function request(method, path, body) {
     for (let attempt = 0; ; attempt++) {
       if (!token || now() >= tokenExpiresAt) await fetchToken()
-      const res = await fetchImpl(`${apiUrl}${path}`, {
+      const res = await timedFetch(`${apiUrl}${path}`, {
         method,
         headers: body === undefined
           ? { Authorization: `Bearer ${token}` }
@@ -116,6 +141,7 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
       request('POST', '/sync/runs', { kind, switches, imageRevision, policyHash }),
     finishRun: (runId, { result, counts, lglCursor, vgCursor, error }) =>
       request('PATCH', `/sync/runs/${runId}`, { result, counts, lglCursor, vgCursor, error }),
+    recentRuns: (limit = 20) => get(`/sync/runs?limit=${limit}`),
     async lastFullRun() {
       const runs = await get('/sync/runs?kind=full&limit=20')
       return runs.find((r) => r.result === 'ok') ?? null

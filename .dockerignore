@@ -1,0 +1,10 @@
+.git
+.env*
+out
+harness
+spike
+docs
+test
+node_modules
+.superpowers
+scratch

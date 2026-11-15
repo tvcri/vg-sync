@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { run, envFileFrom } from '../../src/lgl-vg/main.js'
 
 const ENV = {
@@ -132,7 +133,6 @@ test('an unknown command returns 2', async () => {
   const h = harness()
   assert.equal(await run(['frobnicate'], h.deps), 2)
   assert.match(h.out.join('\n'), /report[\s\S]*setup/)
-  assert.equal(await run([], h.deps), 2)
 })
 
 test('setup prints who it signed in as', async () => {
@@ -215,34 +215,60 @@ test('--out with no value returns 1 with REPORT FAILED', async () => {
   assert.match(h.out.join('\n'), /^REPORT FAILED: /)
 })
 
-test('usage lists full', async () => {
+test('usage lists the service and --once full', async () => {
   const h = harness()
-  assert.equal(await run([], h.deps), 2)
-  assert.match(h.out.join('\n'), /main\.js full /)
+  assert.equal(await run(['frobnicate'], h.deps), 2)
+  const text = h.out.join('\n')
+  assert.match(text, /main\.js\n/)
+  assert.match(text, /main\.js --once full /)
 })
 
-test('full --snapshot with --write-vg exits 2 before any request', async () => {
+test('the bare full command is gone', async () => {
   const h = harness({ lgl: false })
-  assert.equal(await run(['full', '--snapshot', 'x', '--write-vg'], h.deps), 2)
-  assert.match(h.out.join('\n'), /snapshot cannot be used to write/)
+  assert.equal(await run(['full'], h.deps), 2)
+  assert.match(h.out.join('\n'), /^Usage:/)
   assert.deepEqual(h.calls, [])
 })
 
-test('full --max-people must be a positive whole number', async () => {
-  for (const v of ['0', '-1', '2.5', 'abc']) {
-    const h = harness()
-    assert.equal(await run(['full', '--max-people', v], h.deps), 2, v)
+test('--once lgl-check and --once vg-check are refused until step 6', async () => {
+  for (const kind of ['lgl-check', 'vg-check']) {
+    const h = harness({ lgl: false })
+    assert.equal(await run(['--once', kind], h.deps), 2)
+    assert.deepEqual(h.out, ['The VG and LGL checks arrive in step 6.'])
     assert.deepEqual(h.calls, [])
   }
 })
 
-test('full dry run from a snapshot reads the policy, calls no LGL and writes the decisions', async () => {
+test('--once with no kind or an unknown kind prints usage', async () => {
+  for (const argv of [['--once'], ['--once', 'report']]) {
+    const h = harness({ lgl: false })
+    assert.equal(await run(argv, h.deps), 2)
+    assert.match(h.out.join('\n'), /^Usage:/)
+  }
+})
+
+test('--once full --snapshot with --write-vg exits 2 before any request', async () => {
+  const h = harness({ lgl: false })
+  assert.equal(await run(['--once', 'full', '--snapshot', 'x', '--write-vg'], h.deps), 2)
+  assert.match(h.out.join('\n'), /snapshot cannot be used to write/)
+  assert.deepEqual(h.calls, [])
+})
+
+test('--once full --max-people must be a positive whole number', async () => {
+  for (const v of ['0', '-1', '2.5', 'abc']) {
+    const h = harness()
+    assert.equal(await run(['--once', 'full', '--max-people', v], h.deps), 2, v)
+    assert.deepEqual(h.calls, [])
+  }
+})
+
+test('--once full dry run from a snapshot reads the policy, calls no LGL and writes the decisions', async () => {
   const policyText = (await import('node:fs')).readFileSync(new URL('../../policy.json', import.meta.url), 'utf8')
   const h = harness({
     lgl: false,
     files: { snap: JSON.stringify({ constituents, gifts }), 'policy.json': policyText },
   })
-  assert.equal(await run(['full', '--snapshot', 'snap'], h.deps), 0)
+  assert.equal(await run(['--once', 'full', '--snapshot', 'snap'], h.deps), 0)
   assert.match(h.out.at(-1), /^PASS OK full dry-run /)
   assert.equal(h.written.length, 1)
   assert.match(h.written[0].path, new RegExp(`^out/full-${STAMP}\\.jsonl$`))
@@ -302,4 +328,71 @@ test('seed-import --write-vg posts the holds; a dry-run import file or no --file
   assert.equal(await run(['seed-import', '--file', 'run', '--write-vg'], dry.deps), 1)
   assert.match(dry.out.at(-1), /^SEED FAILED .*dry run of the import/)
   assert.equal(await run(['seed-import'], harness().deps), 2)
+})
+
+const policyText = () => readFileSync(new URL('../../policy.json', import.meta.url), 'utf8')
+
+function serviceHarness(o = {}) {
+  const h = harness({ files: { 'policy.json': policyText() }, ...o })
+  const handlers = {}
+  let registered
+  const ready = new Promise((resolve) => { registered = resolve })
+  const timers = new Set()
+  let id = 0
+  h.deps.onSignal = (name, fn) => { handlers[name] = fn; if (handlers.SIGTERM && handlers.SIGINT) registered() }
+  h.deps.setTimer = () => { timers.add(++id); return id }
+  h.deps.clearTimer = (i) => { timers.delete(i) }
+  h.deps.fs = { readdir: async () => [], stat: async () => ({ mtimeMs: NOW }), unlink: async () => {} }
+  return { ...h, handlers, ready, timers }
+}
+
+test('no command starts the service and SIGTERM stops it', async () => {
+  const h = serviceHarness()
+  const done = run([], h.deps)
+  await h.ready
+  assert.deepEqual(h.out.slice(0, 3), [
+    'STARTUP VG signed in as service-account-vg-sync',
+    'STARTUP LGL reached',
+    'STARTUP scheduler started write-vg=off nightly=07:00Z',
+  ])
+  h.handlers.SIGTERM()
+  assert.equal(await done, 0)
+  const stopping = h.out.indexOf('STOPPING')
+  assert.ok(stopping > 2, h.out.join('\n'))
+  assert.equal(h.out.at(-1), 'STOPPED')
+  assert.equal(h.timers.size, 0, 'no timer is left armed')
+  assert.ok(h.calls.some((c) => c.includes('/constituents.json?limit=1')), 'the LGL probe ran')
+})
+
+test('a second signal while stopping does nothing more', async () => {
+  const h = serviceHarness()
+  const done = run([], h.deps)
+  await h.ready
+  h.handlers.SIGINT()
+  h.handlers.SIGTERM()
+  assert.equal(await done, 0)
+  assert.equal(h.out.filter((l) => l === 'STOPPING').length, 1)
+  assert.equal(h.out.filter((l) => l === 'STOPPED').length, 1)
+})
+
+test('the service prints STARTUP FAILED and returns 1 for a config error', async () => {
+  const h = serviceHarness({ lgl: false })
+  h.deps.env = { ...ENV, VG_CLIENT_SECRET: '' }
+  assert.equal(await run([], h.deps), 1)
+  assert.deepEqual(h.out, ['STARTUP FAILED Missing environment variables: VG_CLIENT_SECRET'])
+  assert.deepEqual(h.calls, [])
+})
+
+test('the service prints STARTUP FAILED and returns 1 for a missing policy file', async () => {
+  const h = serviceHarness({ lgl: false, files: {} })
+  assert.equal(await run([], h.deps), 1)
+  assert.match(h.out.at(-1), /^STARTUP FAILED /)
+  assert.deepEqual(h.calls, [])
+})
+
+test('the service returns 1 after a refused sign-in, tried once', async () => {
+  const h = serviceHarness({ lgl: false, signIn: false })
+  assert.equal(await run([], h.deps), 1)
+  assert.match(h.out.at(-1), /^STARTUP FAILED /)
+  assert.equal(h.calls.filter((c) => c.includes('auth.example.org')).length, 1)
 })

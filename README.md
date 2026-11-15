@@ -29,15 +29,67 @@ Three ways to run it:
 The detail file (`out/report-<timestamp>.jsonl`) and any snapshot hold real
 people. Do not commit or share them. `out/` is gitignored.
 
-## Running a full pass
+## Running the service
 
-`npm run full` reads Little Green Light and Village Green, decides every linked
-pair field by field from the sync memory and `policy.json`, links or creates a
-VG person for each LGL donor with no link (or holds it with a reason), removes
-the Donor mark from a person whose LGL record is gone (or follows it to the
-record that replaced it), and prints a summary followed by one line:
-`PASS OK full dry-run ...` or `PASS FAILED full <reason>`. The line counts
-`links`, `creates` and `unlinks` beside the field writes.
+`npm start` (`node src/lgl-vg/main.js` with no command) runs the service. It
+signs in to VG, reaches LGL, and prints three start-up lines:
+
+```
+STARTUP VG signed in as <username>
+STARTUP LGL reached
+STARTUP scheduler started write-vg=<on|off> nightly=<HH:MM>Z
+```
+
+A sign-in or LGL failure is tried three times, 20 seconds apart (a refused
+sign-in only once), then it prints `STARTUP FAILED <reason>` and exits 1, as
+it does for a configuration or policy-file error. Once started it runs a full
+pass at once and then nightly at `FULL_PASS_UTC` (default `07:00`, UTC),
+retries a failed pass an hour later (at most three times), and prints
+`SYNC ALIVE ...` every five minutes. Each pass prints only its `PASS` line. A
+pass running longer than `PASS_TIMEOUT_MINUTES` (default 30) is stopped and
+fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
+dry run. Decisions files go to `OUT_DIR` (default `out`); those older than
+`DECISIONS_KEEP_DAYS` (default 30) are deleted after each pass.
+
+`SIGTERM` or `SIGINT` prints `STOPPING`, stops the running pass between
+writes, prints `STOPPED` and exits 0.
+
+## The image
+
+The service ships as the Docker image `carlsmig/vg-sync`, built by
+`.github/workflows/publish-docker.yml` on every push to `main` and tagged
+`:<sha7>` and `:latest`. The image carries the commit in the
+`org.opencontainers.image.revision` label and the `IMAGE_REVISION`
+environment variable. It holds only `src/`, `package.json` and `policy.json`;
+two things are bind mounts:
+
+- `.env` to `/app/.env` (read-only)
+- the decisions directory to `/app/out` (writable by the `node` user)
+
+The host `out` directory must exist before the first start and be writable by
+uid 1000, the image's `node` user (`install -d -o 1000 -g 1000 vg-sync/out`);
+docker would otherwise create it root-owned, and the bind mount hides the
+image's own chown. `.env` must be readable by uid 1000.
+
+`deploy/docker-compose.example.yml` shows the `sync` service: pinned by
+digest in the `repo@sha256:` form the deployer expects, `restart:
+unless-stopped` and a 30 second stop grace period so a pass can stop cleanly.
+To try it locally:
+
+```
+docker build --build-arg IMAGE_REVISION=$(git rev-parse HEAD) -t vg-sync:local .
+```
+
+## Running a full pass by hand
+
+`npm run full` (`node src/lgl-vg/main.js --once full`) reads Little Green Light
+and Village Green, decides every linked pair field by field from the sync
+memory and `policy.json`, links or creates a VG person for each LGL donor with
+no link (or holds it with a reason), removes the Donor mark from a person whose
+LGL record is gone (or follows it to the record that replaced it), and prints a
+summary followed by one line: `PASS OK full dry-run ...` or `PASS FAILED full
+<reason>`. The line counts `links`, `creates` and `unlinks` beside the field
+writes.
 
 It is a dry run unless you add `--write-vg`. A dry run makes only read requests
 to VG and none that change LGL. With `--write-vg` it records a run row in VG,
@@ -100,7 +152,7 @@ Repeat this after each restore, until the account exists in production.
 
 The harness plays scenarios (invented people, `harness/scenarios/*.js`)
 against the LGL trial account and a local dev VG, runs the real service
-(`main.js full --write-vg`) between their phases, and checks both systems
+(`main.js --once full --write-vg`) between their phases, and checks both systems
 afterwards. Design: `docs/superpowers/specs/2026-11-13-test-harness-design.md`.
 
 Setup: copy `.env.harness.example` to `.env.harness` and fill it in. The LGL

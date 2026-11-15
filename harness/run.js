@@ -147,7 +147,7 @@ async function loadScenarioModules () {
 }
 
 // Runs one pass as a child process; its output goes to the screen and to the log.
-function runPass ({ dir, args, log, command = ['full', '--out', dir], logName = `${basename(dir)}.log` }) {
+function runPass ({ dir, args, log, command = ['--once', 'full', '--out', dir], logName = `${basename(dir)}.log` }) {
   const exampleText = readFileSync(join(REPO, '.env.harness.example'), 'utf8')
   const argv = ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', ...args]
   log(`$ node ${argv.join(' ')}`)

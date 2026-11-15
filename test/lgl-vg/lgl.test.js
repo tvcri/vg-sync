@@ -105,3 +105,67 @@ test('a 404 is an error, not an empty answer', async () => {
   await assert.rejects(lgl.pullGifts(), /404/)
   await assert.rejects(lgl.pullConstituents(), /404/)
 })
+
+const hangingFetch = () => (url, init = {}) =>
+  new Promise((resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(init.signal.reason))
+  })
+
+test('a rejected fetch is retried with backoff', async () => {
+  let n = 0
+  const sleeps = []
+  const lgl = createLglClient({
+    apiKey: 'k',
+    sleep: recordSleeps(sleeps),
+    fetchImpl: async () => {
+      if (++n <= 2) throw new TypeError('fetch failed')
+      return new Response(JSON.stringify({ items: [], total_items: 0 }))
+    },
+  })
+  assert.deepEqual(await lgl.pullGifts(), [])
+  assert.deepEqual(sleeps, [30000, 60000])
+})
+
+test('a fetch that rejects every time fails after five tries', async () => {
+  let n = 0
+  const lgl = createLglClient({
+    apiKey: 'k',
+    sleep: noSleep,
+    fetchImpl: async () => { n++; throw new TypeError('fetch failed') },
+  })
+  await assert.rejects(lgl.pullGifts(), /fetch failed/)
+  assert.equal(n, 5)
+})
+
+test('a request past the timeout counts as a network failure and is retried', async () => {
+  let n = 0
+  const hang = hangingFetch()
+  const lgl = createLglClient({
+    apiKey: 'k',
+    sleep: noSleep,
+    timeoutMs: 20,
+    fetchImpl: async (url, init) => {
+      if (++n === 1) return hang(url, init)
+      return new Response(JSON.stringify({ items: [], total_items: 0 }))
+    },
+  })
+  assert.deepEqual(await lgl.pullGifts(), [])
+  assert.equal(n, 2)
+})
+
+test('a request that times out every time says so', async () => {
+  const lgl = createLglClient({ apiKey: 'k', sleep: noSleep, timeoutMs: 5, fetchImpl: hangingFetch() })
+  await assert.rejects(lgl.pullGifts(), /timed out/)
+})
+
+test('probe asks for one constituent', async () => {
+  const calls = []
+  const lgl = createLglClient({
+    apiKey: 'k',
+    sleep: noSleep,
+    fetchImpl: fakeFetch([{ body: { items: [], total_items: 0 } }], calls),
+  })
+  assert.equal(await lgl.probe(), undefined)
+  assert.equal(calls[0].url.pathname, '/api/v1/constituents.json')
+  assert.equal(calls[0].url.searchParams.get('limit'), '1')
+})

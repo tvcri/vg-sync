@@ -300,3 +300,44 @@ test('createPerson posts the body; deleteDonor sends DELETE and takes a 204 with
   assert.equal(calls[2].init.method, 'DELETE')
   assert.equal(calls[2].url.pathname, '/api/persons/42/donor')
 })
+
+// A fetch that never answers but honors the abort signal, as real fetch does.
+const hangingFetch = () => (url, init = {}) =>
+  new Promise((resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(init.signal.reason))
+  })
+
+test('a token response without access_token fails plainly', async () => {
+  const vg = make([{ body: { expires_in: 300 } }])
+  await assert.rejects(vg.whoAmI(), /token response has no access_token/)
+})
+
+test('a token response without a positive expires_in fails plainly', async () => {
+  await assert.rejects(make([{ body: { access_token: 't' } }]).whoAmI(), /expires_in/)
+  await assert.rejects(make([{ body: { access_token: 't', expires_in: 0 } }]).whoAmI(), /expires_in/)
+})
+
+test('a refused client secret is final', async () => {
+  const vg = make([{ status: 401, body: { error: 'invalid_client' } }])
+  await assert.rejects(vg.whoAmI(), (err) => err.final === true)
+})
+
+test('a 400 unauthorized_client is final but a plain 500 is not', async () => {
+  await assert.rejects(make([{ status: 400, body: { error: 'unauthorized_client' } }]).whoAmI(), (e) => e.final === true)
+  await assert.rejects(make([{ status: 500, body: 'boom' }]).whoAmI(), (e) => !e.final)
+})
+
+test('a request that runs past the timeout fails', async () => {
+  const vg = createVgClient({
+    apiUrl: API, oidcUrl: OIDC, clientId: 'c', clientSecret: 's', scope: 'vg',
+    fetchImpl: hangingFetch(), timeoutMs: 20,
+  })
+  await assert.rejects(vg.whoAmI(), (err) => /timed out/.test(err.message) && !err.final)
+})
+
+test('recentRuns asks for all kinds', async () => {
+  const calls = []
+  const vg = make([tok(), { body: [{ id: 1 }] }], calls)
+  assert.deepEqual(await vg.recentRuns(), [{ id: 1 }])
+  assert.equal(calls[1].url.pathname + calls[1].url.search, '/api/sync/runs?limit=20')
+})

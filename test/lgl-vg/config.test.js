@@ -45,3 +45,33 @@ test('loadConfig reads the step 3 settings and rejects non-numbers by name', () 
   assert.throws(() => loadConfig({ ...full, CIRCUIT_BREAKER_PEOPLE: 'abc' }), /CIRCUIT_BREAKER_PEOPLE/)
   assert.throws(() => loadConfig({ ...full, MAX_CONSTITUENT_DROP_PERCENT: '-1' }), /MAX_CONSTITUENT_DROP_PERCENT/)
 })
+
+test('defaults for the service', () => {
+  const c = loadConfig(full)
+  assert.equal(c.writeVg, false)
+  assert.equal(c.fullPassUtc, '07:00')
+  assert.equal(c.outDir, 'out')
+  assert.equal(c.decisionsKeepDays, 30)
+  assert.equal(c.passTimeoutMinutes, 30)
+})
+
+test('WRITE_VG is on only for "true"', () => {
+  assert.equal(loadConfig({ ...full, WRITE_VG: 'true' }).writeVg, true)
+  for (const v of ['TRUE', '1', 'yes', '']) assert.equal(loadConfig({ ...full, WRITE_VG: v }).writeVg, false)
+})
+
+test('FULL_PASS_UTC must be HH:MM', () => {
+  for (const v of ['7:00', '24:00', '07:60', '0700']) {
+    assert.throws(() => loadConfig({ ...full, FULL_PASS_UTC: v }), /FULL_PASS_UTC must be HH:MM/)
+  }
+  for (const v of ['23:59', '00:00']) assert.equal(loadConfig({ ...full, FULL_PASS_UTC: v }).fullPassUtc, v)
+})
+
+test('PASS_TIMEOUT_MINUTES and DECISIONS_KEEP_DAYS are positive whole numbers', () => {
+  for (const name of ['PASS_TIMEOUT_MINUTES', 'DECISIONS_KEEP_DAYS']) {
+    assert.throws(() => loadConfig({ ...full, [name]: '0' }), new RegExp(name))
+    assert.throws(() => loadConfig({ ...full, [name]: 'x' }), new RegExp(name))
+  }
+  const c = loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '5', DECISIONS_KEEP_DAYS: '9' })
+  assert.deepEqual([c.passTimeoutMinutes, c.decisionsKeepDays], [5, 9])
+})

@@ -1,4 +1,5 @@
-// Command line for the LGL <-> VG report (writes nothing to LGL or VG), the full pass (dry unless --write-vg), the
+// Command line for the LGL <-> VG service (no command: the scheduler; writes to VG only with WRITE_VG=true),
+// one full pass by hand (--once full, dry unless --write-vg), the report (writes nothing to LGL or VG), the
 // one-time load of the import's decisions (dry unless --write-vg) and the service-account setup (records the
 // account's own privacy acknowledgement in VG, only on request).
 
@@ -13,12 +14,16 @@ import { buildReport } from './report.js'
 import { parsePolicy } from './policy.js'
 import { runFullPass } from './pass.js'
 import { importSeed } from './seed.js'
+import { startService } from './service.js'
 
 const USAGE = `Usage:
+  node src/lgl-vg/main.js
+  node src/lgl-vg/main.js --once full [--write-vg] [--max-people <n>] [--out <dir>] [--snapshot <file>]
   node src/lgl-vg/main.js report [--out <dir>] [--save-snapshot] [--snapshot <file>]
-  node src/lgl-vg/main.js full [--write-vg] [--max-people <n>] [--out <dir>] [--snapshot <file>]
   node src/lgl-vg/main.js seed-import --file <import-run.json> [--write-vg]
   node src/lgl-vg/main.js setup [--acknowledge-privacy]
+With no command it runs as the service: a full pass at start and nightly at
+FULL_PASS_UTC, writing to VG only when WRITE_VG=true, until SIGTERM or SIGINT.
 Any command also takes --env <file> (default .env). Variables already set in the
 environment are not overridden by the file.`
 
@@ -208,10 +213,52 @@ async function setup(argv, { env, fetchImpl = fetch, now, stdout }) {
   }
 }
 
+// The service: start-up, then the scheduler until SIGTERM or SIGINT. Resolves 0 once stopped, 1 if it
+// could not start. The clients are created once and serve every pass.
+async function service({
+  env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read,
+  onSignal, setTimer, clearTimer, fs,
+}) {
+  let config, policy, vg, lgl
+  try {
+    config = loadConfig(env)
+    policy = parsePolicy(await read(config.policyFile))
+    vg = createVgClient({ ...config.vg, fetchImpl, now })
+    lgl = createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
+  } catch (err) {
+    stdout(`STARTUP FAILED ${err.message}`)
+    return 1
+  }
+  const svc = await startService({ config, policy, vg, lgl, stdout, now, setTimer, clearTimer, sleep, writeLines: write, fs })
+  if (!svc) return 1
+  return new Promise((resolve) => {
+    let stopping = false
+    const shutdown = async () => {
+      if (stopping) return
+      stopping = true
+      stdout('STOPPING')
+      await svc.stop()
+      stdout('STOPPED')
+      resolve(0)
+    }
+    onSignal('SIGTERM', shutdown)
+    onSignal('SIGINT', shutdown)
+  })
+}
+
 export async function run(argv, deps) {
   const { env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read } = deps
+  if (argv.length === 0) return service(deps)
+  if (argv[0] === '--once') {
+    if (argv[1] === 'full') return full(argv.slice(2), deps)
+    if (argv[1] === 'vg-check' || argv[1] === 'lgl-check') {
+      stdout('The VG and LGL checks arrive in step 6.')
+      return 2
+    }
+    stdout(USAGE)
+    return 2
+  }
   if (argv[0] === 'setup') return setup(argv.slice(1), deps)
-  if (argv[0] === 'full') return full(argv.slice(1), deps)
   if (argv[0] === 'seed-import') return seedImport(argv.slice(1), deps)
   if (argv[0] !== 'report') {
     stdout(USAGE)
@@ -266,10 +313,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     console.log(`No such env file: ${envArgs.file}`)
     process.exit(1)
   }
-  process.exitCode = await run(envArgs.rest, {
+  const code = await run(envArgs.rest, {
     env: process.env,
     fetchImpl: fetch,
     now: Date.now,
+    onSignal: (name, fn) => process.on(name, fn),
     stdout: (t) => console.log(t),
     writeFile: async (p, text) => {
       await mkdir(dirname(p), { recursive: true })
@@ -277,4 +325,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     },
     readFile: (p) => readFile(p, 'utf8'),
   })
+  // The service exits at once: a pass stopped mid-read leaves its request (and any backoff) behind.
+  if (envArgs.rest.length === 0) process.exit(code)
+  process.exitCode = code
 }

@@ -42,7 +42,7 @@ function world(n, changed) {
   return { constituents, gifts: base.map((c) => gift(c.id)), persons, memory }
 }
 
-function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [] } = {}) {
+function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], runs = [] } = {}) {
   const calls = []
   const rec = (name, ret) => async (...a) => { calls.push([name, ...a]); return typeof ret === 'function' ? ret(...a) : ret }
   const vg = {
@@ -51,6 +51,7 @@ function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [] } 
     getSyncFields: rec('getSyncFields', w.memory),
     getSyncHolds: rec('getSyncHolds', holds),
     lastFullRun: rec('lastFullRun', last),
+    recentRuns: rec('recentRuns', runs),
     startRun: rec('startRun', { runId: 9 }),
     finishRun: rec('finishRun', {}),
     getLinkedPersons: rec('getLinkedPersons', (cid) => w.persons.filter((p) => p.donor.lglConstituentId === String(cid))),
@@ -233,4 +234,136 @@ test('a missing constituent with policy unlink: the donor row is removed and an 
   assert.deepEqual(f.calls.filter((c) => c[0] === 'deleteDonor').map((c) => c[1]), ['7'])
   assert.deepEqual(f.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1]).map((h) => [h.reason, h.personId]), [['unlinked', '7']])
   assert.match(f.out.at(-1), /unlinks=1 /)
+})
+
+// --- the service: stop on request, one write run at a time, what may be retried ---
+const MIN = 60 * 1000
+const withResult = (f, extra = {}) => {
+  const results = []
+  return { results, args: (e = {}) => f.args({ onResult: (r) => results.push(r), ...extra, ...e }) }
+}
+
+test('stop before the run row opens writes nothing', async () => {
+  const f = fakes()
+  const ac = new AbortController()
+  f.lgl.pullConstituents = () => new Promise(() => { setImmediate(() => ac.abort('shutdown')) }) // hangs until the signal
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args({ writeVg: true, signal: ac.signal })), 0)
+  assert.ok(!f.names().includes('startRun'))
+  assert.equal(f.out.at(-1), 'PASS STOPPED full stopped by shutdown')
+  assert.deepEqual(r.results, [{ outcome: 'stopped', retryable: false, error: null }])
+})
+
+test('stop during apply records the run as failed by shutdown', async () => {
+  const f = fakes({ w: world(2, 2) })
+  const ac = new AbortController()
+  f.vg.patchPerson = async () => { ac.abort('shutdown'); return {} }
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args({ writeVg: true, signal: ac.signal })), 0)
+  const fins = f.calls.filter((c) => c[0] === 'finishRun')
+  assert.equal(fins.length, 1)
+  assert.equal(fins[0][2].result, 'failed')
+  assert.equal(fins[0][2].error, 'stopped by shutdown')
+  assert.match(f.out.at(-1), /^PASS STOPPED full stopped by shutdown/)
+  assert.equal(r.results.length, 1)
+  assert.equal(r.results[0].outcome, 'stopped')
+  assert.equal(f.files.length, 1)
+})
+
+test('a timed-out pass fails and may be retried', async () => {
+  const f = fakes()
+  const ac = new AbortController()
+  f.lgl.pullGifts = () => new Promise(() => { setImmediate(() => ac.abort('timeout')) }) // hangs until the signal
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args({ writeVg: true, signal: ac.signal, config: { ...baseConfig, passTimeoutMinutes: 30 } })), 1)
+  assert.equal(f.out.at(-1), 'PASS FAILED full timed out after 30 minutes')
+  assert.deepEqual(r.results, [{ outcome: 'failed', retryable: true, error: 'timed out after 30 minutes' }])
+})
+
+test('a write run refuses while another run is running', async () => {
+  const running = (mins) => [{ runId: 7, kind: 'full', result: 'running', startedAt: new Date(NOW - mins * MIN).toISOString() }]
+  const cfg = { ...baseConfig, passTimeoutMinutes: 30 }
+  const f = fakes({ runs: running(5) })
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args({ writeVg: true, config: cfg })), 1)
+  assert.ok(!f.names().includes('startRun'))
+  assert.match(f.out.at(-1), /^PASS FAILED full another sync run \(id 7, full\) started at .* is still running; nothing was written/)
+  assert.equal(r.results[0].retryable, true)
+
+  const old = fakes({ runs: running(31) })
+  assert.equal(await runFullPass(old.args({ writeVg: true, config: cfg })), 0)
+  assert.ok(old.names().includes('startRun'))
+
+  const dry = fakes({ runs: running(5) })
+  assert.equal(await runFullPass(dry.args({ config: cfg })), 0)
+  assert.ok(!dry.names().includes('recentRuns'))
+})
+
+test('the circuit breaker and the drop check are final', async () => {
+  const f = fakes({ w: world(3, 3) })
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args({ writeVg: true, config: { ...baseConfig, circuitBreakerPeople: 2 } })), 1)
+  assert.equal(r.results[0].retryable, false)
+  assert.equal(r.results[0].outcome, 'failed')
+
+  const g = fakes({ last: { counts: { constituents: 100 } } })
+  const q = withResult(g)
+  assert.equal(await runFullPass(q.args({ writeVg: true })), 1)
+  assert.equal(q.results[0].retryable, false)
+})
+
+test('a final token error is final, any other error is retryable', async () => {
+  const f = fakes()
+  f.vg.whoAmI = async () => { throw Object.assign(new Error('sign-in refused'), { final: true }) }
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args()), 1)
+  assert.deepEqual(r.results, [{ outcome: 'failed', retryable: false, error: 'sign-in refused' }])
+
+  const g = fakes({ applyFails: true })
+  const q = withResult(g)
+  await runFullPass(q.args({ writeVg: true }))
+  assert.equal(q.results[0].retryable, true)
+})
+
+test('onResult reports ok once', async () => {
+  const f = fakes()
+  const r = withResult(f)
+  await runFullPass(r.args())
+  assert.deepEqual(r.results, [{ outcome: 'ok', retryable: false, error: null }])
+})
+
+test('quiet leaves out the counts block', async () => {
+  const f = fakes()
+  assert.equal(await runFullPass(f.args({ quiet: true })), 0)
+  assert.ok(!f.out.some((l) => l.startsWith('{')))
+  assert.match(f.out.at(-1), /^PASS OK full dry-run /)
+  const g = fakes()
+  await runFullPass(g.args())
+  assert.ok(g.out.some((l) => l.startsWith('{')))
+  assert.equal(f.out.at(-1), g.out.at(-1))
+})
+
+test('timeout during apply records the run as failed, retryable', async () => {
+  const f = fakes({ w: world(2, 2) })
+  const ac = new AbortController()
+  f.vg.patchPerson = async () => { ac.abort('timeout'); return {} }
+  const r = withResult(f)
+  assert.equal(await runFullPass(r.args({ writeVg: true, signal: ac.signal, config: { ...baseConfig, passTimeoutMinutes: 30 } })), 1)
+  const fins = f.calls.filter((c) => c[0] === 'finishRun')
+  assert.equal(fins.length, 1)
+  assert.equal(fins[0][2].error, 'timed out after 30 minutes')
+  assert.equal(f.out.at(-1), 'PASS FAILED full timed out after 30 minutes')
+  assert.deepEqual(r.results, [{ outcome: 'failed', retryable: true, error: 'timed out after 30 minutes' }])
+})
+
+test('an unparseable start on a running row still blocks a write run', async () => {
+  const f = fakes({ runs: [{ runId: 3, kind: 'full', result: 'running', startedAt: 'garbage' }] })
+  assert.equal(await runFullPass(f.args({ writeVg: true, config: { ...baseConfig, passTimeoutMinutes: 30 } })), 1)
+  assert.ok(!f.names().includes('startRun'))
+})
+
+test('an onResult that throws does not print a second verdict', async () => {
+  const f = fakes()
+  await assert.rejects(runFullPass(f.args({ onResult: () => { throw new Error('x') } })))
+  assert.equal(f.out.filter((l) => l.startsWith('PASS ')).length, 1)
 })

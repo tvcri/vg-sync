@@ -42,6 +42,19 @@ function toCount(env, name, fallback) {
   return Number(s)
 }
 
+function toPositive(env, name, fallback) {
+  const n = toCount(env, name, fallback)
+  if (n < 1) throw new Error(`${name} must be a positive whole number, got "${n}"`)
+  return n
+}
+
+function toClock(env, name, fallback) {
+  if (!present(env[name])) return fallback
+  const s = String(env[name]).trim()
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(s)) throw new Error(`${name} must be HH:MM (24-hour, UTC), got "${s}"`)
+  return s
+}
+
 export function loadConfig(env = process.env) {
   const missing = REQUIRED.filter((k) => !present(env[k]))
   if (missing.length) throw new Error(`Missing environment variables: ${missing.join(', ')}`)
@@ -66,6 +79,11 @@ export function loadConfig(env = process.env) {
     circuitBreakerPeople: toCount(env, 'CIRCUIT_BREAKER_PEOPLE', 50),
     maxConstituentDropPercent: toCount(env, 'MAX_CONSTITUENT_DROP_PERCENT', 10),
     policyFile: present(env.POLICY_FILE) ? String(env.POLICY_FILE).trim() : 'policy.json',
+    writeVg: String(env.WRITE_VG ?? '').trim() === 'true',
+    fullPassUtc: toClock(env, 'FULL_PASS_UTC', '07:00'),
+    outDir: present(env.OUT_DIR) ? String(env.OUT_DIR).trim() : 'out',
+    decisionsKeepDays: toPositive(env, 'DECISIONS_KEEP_DAYS', 30),
+    passTimeoutMinutes: toPositive(env, 'PASS_TIMEOUT_MINUTES', 30),
     imageRevision: present(env.IMAGE_REVISION) ? String(env.IMAGE_REVISION).trim() : null,
   }
 }

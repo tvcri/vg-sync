@@ -18,7 +18,7 @@ function lglCursorOf(constituents) {
 
 export async function runFullPass({
   config, policy, vg, lgl = null, snapshot = null, writeVg = false, maxPeople = null,
-  now, writeLines, stdout, out,
+  now, writeLines, stdout, out, signal = null, quiet = false, onResult = () => {},
 }) {
   const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-')
   const decisionsPath = `${out}/full-${stamp}.jsonl`
@@ -27,6 +27,21 @@ export async function runFullPass({
   let runId = null
   const mode = writeVg ? 'write-vg' : 'dry-run'
 
+  const minutes = config.passTimeoutMinutes
+  // Any abort reason other than 'timeout' is treated as a shutdown.
+  const timedOut = () => signal?.reason === 'timeout'
+  const stopError = () => Object.assign(new Error(timedOut() ? `timed out after ${minutes} minutes` : 'stopped by shutdown'), { stop: true })
+  const checkStop = () => { if (signal?.aborted) throw stopError() }
+  // A read is abandoned the moment the signal fires: nothing has been written, so nothing is lost.
+  const read = (promise) => {
+    if (!signal) return promise
+    if (signal.aborted) { promise.catch(() => {}); throw stopError() }
+    let onAbort
+    const stop = new Promise((_, reject) => { onAbort = () => reject(stopError()); signal.addEventListener('abort', onAbort, { once: true }) })
+    return Promise.race([promise, stop]).finally(() => signal.removeEventListener('abort', onAbort))
+  }
+  let result
+
   const saveDecisions = async () => {
     if (planDecisions === null) return
     const all = [...planDecisions, ...logged]
@@ -34,23 +49,30 @@ export async function runFullPass({
   }
 
   try {
-    await vg.whoAmI()
+    await read(vg.whoAmI())
+    checkStop()
     let constituents, gifts
     if (snapshot) ({ constituents, gifts } = snapshot)
     else {
-      constituents = await lgl.pullConstituents()
-      gifts = await lgl.pullGifts()
+      constituents = await read(lgl.pullConstituents())
+      checkStop()
+      gifts = await read(lgl.pullGifts())
     }
-    const persons = await vg.listPersons()
-    const memory = await vg.getSyncFields()
-    const holdsRead = await vg.getSyncHolds(['open', 'dismissed'])
-    const last = await vg.lastFullRun()
+    checkStop()
+    const persons = await read(vg.listPersons())
+    checkStop()
+    const memory = await read(vg.getSyncFields())
+    checkStop()
+    const holdsRead = await read(vg.getSyncHolds(['open', 'dismissed']))
+    checkStop()
+    const last = await read(vg.lastFullRun())
+    checkStop()
 
     const lastCount = last?.counts?.constituents
     if (Number.isFinite(lastCount) && lastCount > 0) {
       const floor = lastCount * (100 - config.maxConstituentDropPercent) / 100
       if (constituents.length < floor) {
-        throw new Error(`LGL returned ${constituents.length} constituents, fewer than ${100 - config.maxConstituentDropPercent}% of the last full run's ${lastCount}; nothing was written`)
+        throw Object.assign(new Error(`LGL returned ${constituents.length} constituents, fewer than ${100 - config.maxConstituentDropPercent}% of the last full run's ${lastCount}; nothing was written`), { final: true })
       }
     } else {
       stdout('No earlier successful full run with a constituent count: the constituent-drop check is skipped this pass')
@@ -75,20 +97,27 @@ export async function runFullPass({
     const limit = maxPeople ?? config.circuitBreakerPeople
     const trips = plan.counts.peopleChanged > limit
     if (trips && writeVg) {
-      throw new Error(`The plan changes ${plan.counts.peopleChanged} people, more than the limit of ${limit}; nothing was written. Review the decisions file, then raise the limit with --max-people.`)
+      throw Object.assign(new Error(`The plan changes ${plan.counts.peopleChanged} people, more than the limit of ${limit}; nothing was written. Review the decisions file, then raise the limit with --max-people.`), { final: true })
     }
 
     const openRead = holdsRead.filter((h) => h.state === 'open').length
     let applied = null
     if (writeVg) {
+      // One write run at a time: a run row still 'running' within the pass timeout is a live pass.
+      const cutoff = new Date(now()).getTime() - minutes * 60 * 1000
+      // Read-then-insert is not atomic across processes: the race is accepted (a by-hand override only).
+      const live = (await read(vg.recentRuns())).find((r) => r.result === 'running' && !(Date.parse(r.startedAt) < cutoff)) // an unparseable start counts as live
+      if (live) throw new Error(`another sync run (id ${live.runId}, ${live.kind}) started at ${live.startedAt} is still running; nothing was written`)
+      checkStop()
       const run = await vg.startRun({
         kind: 'full', switches: { writeVg: true, writeLgl: false },
         imageRevision: config.imageRevision, policyHash: policy.hash,
       })
       runId = run.runId
       applied = await applyPlan(plan, {
-        vg, existingHolds: holdsRead, log: (d) => logged.push(d), replan: (fresh) => unlinkedPlan(fresh, []),
+        vg, existingHolds: holdsRead, log: (d) => logged.push(d), replan: (fresh) => unlinkedPlan(fresh, []), signal,
       })
+      if (applied.stopped) throw stopError()
       await vg.finishRun(runId, {
         result: 'ok',
         counts: { ...plan.counts, constituents: constituents.length, apply: applied.counts },
@@ -101,7 +130,7 @@ export async function runFullPass({
 
     // A dry run shows what the hold table would do: opened, kept, reopened, closed, left dismissed.
     const holdPreview = writeVg ? null : reconcileHolds([...plan.holds, ...unlinked.holds], holdsRead).counts
-    stdout(JSON.stringify({ counts: plan.counts, apply: applied?.counts ?? null, ...(holdPreview ? { holdsIfWritten: holdPreview } : {}) }, null, 2))
+    if (!quiet) stdout(JSON.stringify({ counts: plan.counts, apply: applied?.counts ?? null, ...(holdPreview ? { holdsIfWritten: holdPreview } : {}) }, null, 2))
     if (trips) {
       stdout(`The circuit breaker would trip: the plan changes ${plan.counts.peopleChanged} people, more than the limit of ${limit}. A write run would fail without writing; review the decisions file, then raise the limit with --max-people.`)
     }
@@ -118,7 +147,7 @@ export async function runFullPass({
         'holdsOpened=0', 'holdsClosed=0', `holdsOpen=${openRead}`, `holdsPlanned=${plan.counts.holds + unlinked.holds.length}`,
         ...(trips ? ['breaker=would-trip'] : [])]
     stdout(`PASS OK full ${mode} people=${plan.counts.peopleChanged} ${parts.join(' ')}`)
-    return 0
+    result = { outcome: 'ok', retryable: false, error: null }
   } catch (err) {
     if (runId !== null) {
       try {
@@ -127,7 +156,14 @@ export async function runFullPass({
       } catch { /* best effort: the failure being reported is the first one */ }
     }
     try { await saveDecisions() } catch { /* best effort */ }
-    stdout(`PASS FAILED full ${err.message}`)
-    return 1
+    if (err.stop && !timedOut()) {
+      stdout(`PASS STOPPED full ${err.message}`)
+      result = { outcome: 'stopped', retryable: false, error: null }
+    } else {
+      stdout(`PASS FAILED full ${err.message}`)
+      result = { outcome: 'failed', retryable: !(err.final === true), error: err.message }
+    }
   }
+  onResult(result)
+  return result.outcome === 'failed' ? 1 : 0
 }

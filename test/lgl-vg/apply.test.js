@@ -307,3 +307,80 @@ test('a refused finish keeps its create-unfinished hold open and opens no other'
   assert.deepEqual(vg.calls.filter((c) => c[0] === 'createSyncHolds'), [])
   assert.deepEqual(vg.calls.filter((c) => c[0] === 'patchSyncHolds').flatMap((c) => c[1]), [{ holdId: '9', seen: true }])
 })
+
+// --- stopping between writes (shutdown) ---
+const oneField = (personId, fingerprint) => ({ kind: 'person', personId, constituentId: '101', address: null,
+  fields: { firstName: { body: { firstName: 'Janet' }, expect: comparable('firstName', 'Jane'), agree: agreeRow(personId, 'firstName'), fingerprint } } })
+const planHold = { lglConstituentId: '101', personId: '7', field: 'email', reason: 'couple', fingerprint: 'z', detail: {} }
+
+test('an aborted signal stops before the first write', async () => {
+  const vg = fake()
+  const ac = new AbortController()
+  ac.abort()
+  const plan = { ...emptyPlan, agree: [agreeRow('9', 'email')], holds: [planHold], writes: [oneField('7', 'fa'), ...donorPlan(null).writes] }
+  const r = await applyPlan(plan, { vg, existingHolds: [], signal: ac.signal })
+  assert.equal(r.stopped, true)
+  assert.ok(!names(vg).some((n) => ['patchPerson', 'putDonor', 'createSyncHolds', 'patchSyncHolds'].includes(n)))
+  assert.deepEqual(vg.calls.find((c) => c[0] === 'putSyncFields')[1], plan.agree)
+})
+
+test('stop after one person write keeps that write\'s memory and refusal holds', async () => {
+  const vg = fake({ patchErr: { 7: 422 } })
+  const ac = new AbortController()
+  const patch = vg.patchPerson
+  vg.patchPerson = async (...a) => { ac.abort(); return patch(...a) }
+  const plan = { ...emptyPlan, agree: [agreeRow('9', 'email')], holds: [planHold], writes: [oneField('7', 'fa'), oneField('8', 'fc')] }
+  const r = await applyPlan(plan, { vg, existingHolds: [], signal: ac.signal })
+  assert.equal(r.stopped, true)
+  assert.deepEqual(vg.calls.filter((c) => c[0] === 'patchPerson').map((c) => c[1]), ['7']) // the second write is not attempted
+  const created = vg.calls.filter((c) => c[0] === 'createSyncHolds')
+  assert.equal(created.length, 1)
+  assert.deepEqual(created[0][1].map((h) => [h.personId, h.field, h.reason, h.fingerprint]), [['7', 'firstName', 'vg-refused', 'fa']])
+  assert.deepEqual(vg.calls.find((c) => c[0] === 'putSyncFields')[1], plan.agree)
+  assert.ok(!names(vg).includes('patchSyncHolds'))
+  assert.deepEqual([r.counts.holds.opened, r.counts.holds.closed, r.counts.holds.seen], [1, 0, 0])
+})
+
+test('stop during a create finishes the create', async () => {
+  const vg = roster()
+  const ac = new AbortController()
+  const create = vg.createPerson
+  vg.createPerson = async (...a) => { ac.abort(); return create(...a) }
+  const u = up({ creates: [createW, { ...createW, constituentId: '202', fingerprint: 'fd' }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, replan: same(u), signal: ac.signal })
+  assert.equal(r.stopped, true)
+  assert.deepEqual(names(vg), ['listPersons', 'geocodeTown', 'createPerson', 'createSyncHolds', 'putSyncFields', 'putDonor', 'patchSyncHolds'])
+  assert.deepEqual(vg.calls[3][1].map((h) => [h.reason, h.lglConstituentId]), [['create-unfinished', '201']])
+  assert.deepEqual(vg.calls[6][1], [{ holdId: 'n0', state: 'closed' }])
+  assert.equal(r.counts.unlinked.created, 1)
+})
+
+test('a stopped pass never closes an existing hold', async () => {
+  const existing = { holdId: '33', lglConstituentId: '101', personId: '8', field: 'email', reason: 'couple', fingerprint: 'q', detail: {}, state: 'open' }
+  const plan = { ...emptyPlan, writes: [oneField('7', 'fa'), oneField('8', 'fc')] }
+  // The whole plan does not want the hold, so a finished pass closes it.
+  const full = fake()
+  await applyPlan(plan, { vg: full, existingHolds: [existing] })
+  assert.deepEqual(full.calls.filter((c) => c[0] === 'patchSyncHolds').flatMap((c) => c[1]), [{ holdId: '33', state: 'closed' }])
+  const vg = fake()
+  const ac = new AbortController()
+  const patch = vg.patchPerson
+  vg.patchPerson = async (...a) => { ac.abort(); return patch(...a) }
+  const r = await applyPlan(plan, { vg, existingHolds: [existing], signal: ac.signal })
+  assert.equal(r.stopped, true)
+  assert.ok(!names(vg).includes('patchSyncHolds'))
+  assert.equal(r.counts.holds.closed, 0)
+})
+
+test('without a signal nothing changes', async () => {
+  const vg = fake()
+  const logged = []
+  const r = await applyPlan(twoField('old@example.org'), { vg, existingHolds: [], log: (d) => logged.push(d) })
+  assert.equal(r.stopped, false)
+  assert.deepEqual(names(vg), ['getLinkedPersons', 'patchPerson', 'putSyncFields'])
+  assert.deepEqual(vg.calls.find((c) => c[0] === 'patchPerson'), ['patchPerson', '7', { firstName: 'Janet' }])
+  assert.equal(r.counts.stale, 1)
+  assert.equal(r.counts.written, 1)
+  assert.deepEqual(vg.calls.find((c) => c[0] === 'putSyncFields')[1].map((x) => x.field), ['firstName'])
+  assert.deepEqual(logged.map((d) => [d.field, d.outcome]), [['email', 'stale'], ['firstName', 'written']])
+})

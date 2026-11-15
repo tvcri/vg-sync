@@ -1,0 +1,16 @@
+# Example service entry for the compose file on the VM. Nothing here is real.
+services:
+  sync:
+    # Keep this line in the `repo@sha256:` form: the deployer rewrites it.
+    image: carlsmig/vg-sync@sha256:<digest>  # <commit>
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # For the workstation rehearsal, reach the local database with:
+    # network_mode: host
+    # The host out directory must exist before the first start and be writable
+    # by uid 1000 (the image's node user), e.g. `install -d -o 1000 -g 1000
+    # vg-sync/out`: docker would otherwise create it root-owned, and the bind
+    # mount hides the image's chown. .env must be readable by uid 1000.
+    volumes:
+      - ./vg-sync/.env:/app/.env:ro
+      - ./vg-sync/out:/app/out

@@ -7,8 +7,9 @@
   },
   "scripts": {
     "test": "node --test",
+    "start": "node src/lgl-vg/main.js",
     "report": "node src/lgl-vg/main.js report",
-    "full": "node src/lgl-vg/main.js full",
+    "full": "node src/lgl-vg/main.js --once full",
     "setup": "node src/lgl-vg/main.js setup",
     "harness": "node harness/run.js"
   }
