@@ -5,6 +5,7 @@
 // record-level reasons: those are the full pass's, the only one that sees deletions.
 import { planLinked } from './plan.js'
 import { planUnlinked } from './unlinked.js'
+import { reconcileHolds } from './holds.js'
 
 export const RECORD_REASONS = new Set(['lgl-missing', 'no-longer-donor'])
 
@@ -116,6 +117,7 @@ export function planCheck({ touched, cache, persons, memory, holds, policy, conf
   }
   plan.counts = {
     ...linked.counts,
+    lglMissing: 0, noLongerDonor: 0, // the check does not act on these; the full pass does
     holds: planHolds.length,
     unlinked: unlinked.counts,
     peopleChanged: peopleOf(plan, { donor: true }).size,
@@ -137,11 +139,18 @@ function peopleOf(plan, { donor }) {
 // and creates (once per constituent). A new last gift date alone does not count.
 export const breakerPeople = (plan) => peopleOf(plan, { donor: false }).size
 
-// True when the plan holds anything other than same: a decision, a write, a hold, an agree row,
-// or an unlinked action.
+// Decision outcomes that are a change (plan.js and unlinked.js): a write, a deferred write, an
+// agreed value recorded. 'hold' counts through the hold table below; 'skip' (a donor left alone) is not.
+const CHANGE_OUTCOMES = new Set(['write-vg', 'deferred', 'record'])
+
+// True when the plan holds anything other than same: a write or deferred decision, a hold the
+// hold table would open, change, reopen or close, a memory row, or a link, follow, create or
+// finish. An open hold that stays open unchanged, or a dismissed one left dismissed, is not.
 export function foundChange(plan) {
   const u = plan.unlinked ?? { decisions: [], links: [], follows: [], creates: [], finishes: [], holds: [] }
-  return [...plan.decisions, ...u.decisions].some((d) => d.outcome !== 'same') ||
-    plan.writes.length > 0 || plan.holds.length > 0 || plan.agree.length > 0 ||
-    [u.links, u.follows, u.creates, u.finishes, u.holds].some((x) => x.length > 0)
+  if ([...plan.decisions, ...u.decisions].some((d) => CHANGE_OUTCOMES.has(d.outcome))) return true
+  if (plan.writes.length > 0 || plan.agree.length > 0) return true
+  if ([u.links, u.follows, u.creates, u.finishes].some((x) => x.length > 0)) return true
+  const h = reconcileHolds([...plan.holds, ...u.holds], plan.existingHolds ?? []).counts
+  return h.opened + h.changed + h.reopened + h.closed > 0
 }

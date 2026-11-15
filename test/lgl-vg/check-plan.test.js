@@ -5,6 +5,7 @@ import {
   RECORD_REASONS, mergeLglChanges, lglCursorAfter, vgTouched, planCheck, breakerPeople, foundChange,
 } from '../../src/lgl-vg/check-plan.js'
 import { reconcileHolds } from '../../src/lgl-vg/holds.js'
+import { unlinkedFingerprint } from '../../src/lgl-vg/match.js'
 import { parsePolicy } from '../../src/lgl-vg/policy.js'
 import { FIELDS, lglFields } from '../../src/lgl-vg/fields.js'
 
@@ -145,6 +146,7 @@ test('record-level holds on a touched constituent are left alone', () => {
   const r = reconcileHolds([...p.holds, ...p.unlinked.holds], p.existingHolds)
   assert.equal(r.counts.closed, 0)
   assert.deepEqual(r.patch, [])
+  assert.deepEqual([p.counts.lglMissing, p.counts.noLongerDonor], [0, 0])
 })
 
 test('a check never unlinks', () => {
@@ -154,6 +156,7 @@ test('a check never unlinks', () => {
   assert.equal(p.holds.some((h) => h.reason === 'lgl-missing'), false)
   assert.equal(p.decisions.some((d) => d.kind === 'record'), false)
   assert.equal(p.unlinked.decisions.some((d) => d.action === 'unlink'), false)
+  assert.deepEqual([p.counts.lglMissing, p.counts.noLongerDonor], [0, 0])
 })
 
 test('a duplicate in LGL is held even when only one of the two is touched', () => {
@@ -205,4 +208,29 @@ test('foundChange is false for an all-same plan', () => {
   assert.deepEqual([p.decisions, p.writes, p.agree, p.holds, p.unlinked.decisions], [[], [], [], [], []])
   assert.equal(foundChange(p), false)
   assert.equal(breakerPeople(p), 0)
+})
+
+test('an unchanged open hold is not a change', () => {
+  const persons = [per(7, { email: 'other@example.org' })] // name only: held
+  const cache = cacheOf([con(201)])
+  const fp = unlinkedFingerprint('name-only', ['7'], '2026-06-01')
+  const same = check({ touched: ['201'], cache, persons, holds: [hold({ lglConstituentId: '201', reason: 'name-only', fingerprint: fp })] })
+  assert.deepEqual(same.unlinked.holds.map((h) => h.reason), ['name-only'])
+  assert.equal(foundChange(same), false)
+  // the same hold with new facts is changed, and a hold not yet open is opened
+  const changed = check({ touched: ['201'], cache, persons, holds: [hold({ lglConstituentId: '201', reason: 'name-only', fingerprint: 'old' })] })
+  assert.equal(foundChange(changed), true)
+  assert.equal(foundChange(check({ touched: ['201'], cache, persons })), true)
+  // an open owned hold the plan no longer wants (no longer a donor) is closed
+  const closing = check({ touched: ['201'], cache: cacheOf([con(201)], []), persons, holds: [hold({ lglConstituentId: '201', reason: 'name-only', fingerprint: fp })] })
+  assert.deepEqual([closing.unlinked.decisions, closing.unlinked.holds, closing.unlinked.links], [[], [], []])
+  assert.equal(foundChange(closing), true)
+})
+
+test('a skipped donor is not a change', () => {
+  const persons = [per(7, { email: 'other@example.org' })]
+  const dismissed = hold({ lglConstituentId: '201', reason: 'name-only', state: 'dismissed', dismissalKind: 'staff' })
+  const p = check({ touched: ['201'], cache: cacheOf([con(201)]), persons, holds: [dismissed] })
+  assert.deepEqual(p.unlinked.decisions.map((d) => d.outcome), ['skip'])
+  assert.equal(foundChange(p), false)
 })
