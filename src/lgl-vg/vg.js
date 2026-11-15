@@ -64,8 +64,9 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
     tokenExpiresAt = now() + body.expires_in * 1000 - EXPIRY_MARGIN_MS
   }
 
-  // A 403 means the account lacks a role grant, the privacy acknowledgement or the scope: retrying will
-  // not help, so the error is final. A 401 gets one fresh token first.
+  // A 403 usually means the account lacks a role grant, the privacy acknowledgement or the scope; the
+  // error says so. It is not final here (start-up treats it as final for its own check). A 401 gets one
+  // fresh token first.
   async function request(method, path, body, { timeoutMs: callTimeoutMs } = {}) {
     const deadline = callTimeoutMs ? { ms: callTimeoutMs, signal: AbortSignal.timeout(callTimeoutMs) } : undefined
     for (let attempt = 0; ; attempt++) {
@@ -84,16 +85,14 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
       if (!res.ok) {
         const text = await res.text()
         const hint = res.status === 403 ? FORBIDDEN_HINT : ''
-        throw httpError(`VG ${method} ${path.split('?')[0]} → ${res.status}: ${text.slice(0, 200)}${hint}`, res.status, {
-          final: res.status === 403,
-        })
+        throw httpError(`VG ${method} ${path.split('?')[0]} → ${res.status}: ${text.slice(0, 200)}${hint}`, res.status)
       }
       if (res.status === 204) return null // DELETE answers with no body
       return res.json()
     }
   }
 
-  const get = (path) => request('GET', path)
+  const get = (path, opts) => request('GET', path, undefined, opts)
 
   async function inBatches(method, path, items) {
     const out = []
@@ -106,7 +105,7 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
 
   return {
     // { timeoutMs } bounds the whole call (start-up uses a short one).
-    whoAmI: ({ timeoutMs: callTimeoutMs } = {}) => request('GET', '/user', undefined, { timeoutMs: callTimeoutMs }),
+    whoAmI: (opts) => get('/user', opts),
     async privacyStatus() {
       return (await get('/user?projection=privacyStatus')).privacyStatus
     },

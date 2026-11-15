@@ -7,8 +7,8 @@ const PAGE = 1000
 const MAX_ATTEMPTS = 5
 const BACKOFF_SECONDS = [30, 60, 120, 240]
 const DEFAULT_TIMEOUT_MS = 120_000
-// The start-up probe makes one attempt with a short timeout: start-up does its own retries, and must
-// finish inside the deployer's 90-second health gate.
+// The probe makes one attempt with a short timeout. Start-up passes its own timeout (from its shared
+// budget) and does its own retries; this is only the default.
 export const PROBE_TIMEOUT_MS = 15_000
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -16,7 +16,8 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
   if (!apiKey) throw new Error('LGL_API_KEY is not set')
   const auth = 'Basic ' + Buffer.from(`${apiKey}:`).toString('base64')
 
-  // A 401 or 403 means the API key is wrong or revoked: retrying will not help, so the error is final.
+  // A 401 means the API key is wrong or revoked: retrying will not help, so the error is final. A 403 is
+  // not: LGL is not known to answer a bad key with one, so it is left to the caller's retries.
   async function get(path, params = {}, { attempts = MAX_ATTEMPTS, timeoutMs: callTimeoutMs = timeoutMs } = {}) {
     const url = new URL(`${baseUrl}${path}`)
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v))
@@ -47,7 +48,7 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
         const text = await res.text()
         throw Object.assign(new Error(`LGL GET ${path} → ${res.status}: ${text.slice(0, 200)}`), {
           status: res.status,
-          final: res.status === 401 || res.status === 403,
+          final: res.status === 401,
         })
       }
       return res.json()
@@ -74,9 +75,17 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
     pullConstituents: () =>
       fetchAll('/constituents/search', { expand: 'email_addresses,street_addresses,phone_numbers' }),
     pullGifts: () => fetchAll('/gifts/search'),
-    // One cheap read, to show the API key still works: one attempt, a short timeout. Throws on failure.
-    async probe() {
-      await get('/constituents.json', { limit: 1 }, { attempts: 1, timeoutMs: probeTimeoutMs })
+    // One cheap read, to show LGL answers and the API key still works: one attempt, a short timeout.
+    // A 429 (LGL's rate-limit pause) counts as reached: LGL answered, and the key was not refused.
+    // Resolves { rateLimited }; throws on any other failure.
+    async probe({ timeoutMs: probeTimeout = probeTimeoutMs } = {}) {
+      try {
+        await get('/constituents.json', { limit: 1 }, { attempts: 1, timeoutMs: probeTimeout })
+      } catch (err) {
+        if (err?.status === 429) return { rateLimited: true }
+        throw err
+      }
+      return { rateLimited: false }
     },
   }
 }

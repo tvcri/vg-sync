@@ -10,11 +10,14 @@ import { runFullPass } from './pass.js'
 import { createScheduler } from './scheduler.js'
 
 const DAY_MS = 86_400_000
+// Start-up checks VG, then LGL. Each check gets up to three tries, 20 s apart, each try with up to 15 s.
+// Both checks share one budget of 80 s, so start-up ends inside the deployer's 90-second health gate:
+// a try gets min(15 s, the time left), and no try or sleep starts that could not finish inside the budget.
+const STARTUP_BUDGET_MS = 80_000
 const STARTUP_TRIES = 3
 const STARTUP_DELAY_MS = 20_000
-// Each start-up check is one attempt with a short timeout (the LGL probe has its own, also 15 s), so the
-// tries above are the only retries: 3 × 15 s + 2 × 20 s = 85 s, inside the deployer's 90-second health gate.
 const STARTUP_TIMEOUT_MS = 15_000
+const STARTUP_MIN_TRY_MS = 1_000 // a try with less time than this is not worth starting
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const defaultFs = { readdir: fsReaddir, stat: fsStat, unlink: fsUnlink }
 
@@ -40,14 +43,20 @@ export async function pruneDecisions({ dir, keepDays, now, readdir, stat, unlink
   return deleted
 }
 
-// Tries fn three times in all, 20 seconds apart. A final error (a refused sign-in, a bad LGL key) is not
-// retried.
-async function withTries(fn, sleep) {
+// Tries fn(timeoutMs) up to three times, 20 seconds apart, within the shared start-up deadline. A final
+// error (a refused sign-in, a bad LGL key, or what isFinal picks out) is not retried. When the deadline
+// leaves no room for another try, it fails with the last error.
+async function withTries(fn, { sleep, now, deadline, isFinal = (err) => err?.final === true }) {
+  const ranOut = (last) =>
+    new Error(`start-up time ran out (${STARTUP_BUDGET_MS / 1000} s)${last ? `; last error: ${last.message ?? last}` : ''}`)
   for (let attempt = 1; ; attempt++) {
+    const left = deadline - now()
+    if (left < STARTUP_MIN_TRY_MS) throw ranOut(null)
     try {
-      return await fn()
+      return await fn(Math.min(STARTUP_TIMEOUT_MS, left))
     } catch (err) {
-      if (err?.final === true || attempt >= STARTUP_TRIES) throw err
+      if (isFinal(err) || attempt >= STARTUP_TRIES) throw err
+      if (now() + STARTUP_DELAY_MS + STARTUP_MIN_TRY_MS > deadline) throw ranOut(err)
       await sleep(STARTUP_DELAY_MS)
     }
   }
@@ -58,19 +67,25 @@ export async function startService({
   sleep = defaultSleep, writeLines, fs = defaultFs,
 }) {
   try {
+    const deadline = now() + STARTUP_BUDGET_MS
     let me
     try {
-      me = await withTries(() => vg.whoAmI({ timeoutMs: STARTUP_TIMEOUT_MS }), sleep)
+      // A 403 here means the account lacks a role grant, the privacy acknowledgement or the scope: the
+      // error says which to check, and retrying will not help.
+      me = await withTries((timeoutMs) => vg.whoAmI({ timeoutMs }), {
+        sleep, now, deadline, isFinal: (err) => err?.final === true || err?.status === 403,
+      })
     } catch (err) {
       throw new Error(`VG sign-in failed: ${err?.message ?? err}`)
     }
     stdout(`STARTUP VG signed in as ${me.username}`)
+    let reached
     try {
-      await withTries(() => lgl.probe(), sleep)
+      reached = await withTries((timeoutMs) => lgl.probe({ timeoutMs }), { sleep, now, deadline })
     } catch (err) {
       throw new Error(`LGL not reached: ${err?.message ?? err}`)
     }
-    stdout('STARTUP LGL reached')
+    stdout(`STARTUP LGL reached${reached?.rateLimited ? ' (rate-limited)' : ''}`)
   } catch (err) {
     stdout(`STARTUP FAILED ${err.message}`)
     return null

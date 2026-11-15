@@ -342,8 +342,8 @@ test('recentRuns asks for all kinds', async () => {
   assert.equal(calls[1].url.pathname + calls[1].url.search, '/api/sync/runs?limit=20')
 })
 
-test('an API 403 (no role grant) is final; a 401 still refetches the token once', async () => {
-  await assert.rejects(make([tok(), { status: 403, body: 'forbidden' }]).listPersons(), (e) => e.status === 403 && e.final === true)
+test('an API 403 is not final; a 401 still refetches the token once', async () => {
+  await assert.rejects(make([tok(), { status: 403, body: 'forbidden' }]).listPersons(), (e) => e.status === 403 && !e.final)
   const calls = []
   const vg = make([tok(1), { status: 401, body: 'expired' }, tok(2), { body: { ok: 1 } }], calls)
   assert.deepEqual(await vg.whoAmI(), { ok: 1 })

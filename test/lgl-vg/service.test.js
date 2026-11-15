@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { startService, pruneDecisions } from '../../src/lgl-vg/service.js'
 import { parsePolicy } from '../../src/lgl-vg/policy.js'
-import { PROBE_TIMEOUT_MS } from '../../src/lgl-vg/lgl.js'
 
 const policy = parsePolicy(readFileSync(new URL('../../policy.json', import.meta.url), 'utf8'))
 const START = Date.parse('2026-11-12T10:00:00.000Z')
@@ -58,7 +57,7 @@ function setup({ whoAmI, probe, pullConstituents = hang } = {}) {
     recentRuns: async () => [],
   }
   const lgl = {
-    probe: async () => { calls.probe++; if (probe) return probe() },
+    probe: async (opts) => { calls.probe++; calls.firstProbeOpts ??= opts; if (probe) return probe(opts); return { rateLimited: false } },
     pullConstituents: () => pullConstituents(),
     pullGifts: async () => [],
   }
@@ -119,25 +118,87 @@ test('startup retries LGL and succeeds on the third try', async () => {
   await svc.stop()
 })
 
-test('startup asks VG with a 15-second timeout for the whole call', async () => {
+test('startup asks VG and LGL each with a 15-second timeout for the whole call', async () => {
   const s = setup()
   const svc = await startService(s.deps)
   assert.deepEqual(s.calls.firstWhoAmIOpts, { timeoutMs: 15_000 })
+  assert.deepEqual(s.calls.firstProbeOpts, { timeoutMs: 15_000 })
   await svc.stop()
 })
 
-// Under fake time: every check runs to its timeout (VG's default is 60 s), and sleep advances the clock.
-test('the worst start-up failure ends within the deployer\'s 90-second health gate', async () => {
-  for (const failing of ['vg', 'lgl']) {
-    let t = 0
-    const s = setup({
-      whoAmI: (opts) => { if (failing === 'vg') { t += opts?.timeoutMs ?? 60_000; throw new Error('timed out') } return { username: 'vg-sync' } },
-      probe: () => { t += PROBE_TIMEOUT_MS; throw new Error('timed out') },
-    })
-    assert.equal(await startService({ ...s.deps, sleep: async (ms) => { t += ms } }), null)
-    assert.match(s.out.at(-1), /^STARTUP FAILED /)
-    assert.ok(t <= 90_000, `${failing}: ${t} ms`)
+test('startup takes an LGL 429 as reached, at once', async () => {
+  const s = setup({ probe: () => ({ rateLimited: true }) })
+  const svc = await startService(s.deps)
+  assert.ok(svc)
+  assert.equal(s.calls.probe, 1)
+  assert.deepEqual(s.sleeps, [])
+  assert.equal(s.out[1], 'STARTUP LGL reached (rate-limited)')
+  assert.ok(s.out[1].startsWith('STARTUP LGL reached'))
+  await svc.stop()
+})
+
+test('startup does not retry a VG 403 and says what to check', async () => {
+  const forbidden = Object.assign(
+    new Error('VG GET /user → 403: forbidden (check that the service account has a role grant, a privacy acknowledgement, and the scope in VG_SCOPE)'),
+    { status: 403 },
+  )
+  const s = setup({ whoAmI: () => { throw forbidden } })
+  assert.equal(await startService(s.deps), null)
+  assert.equal(s.calls.whoAmI, 1)
+  assert.deepEqual(s.sleeps, [])
+  assert.match(s.out.at(-1), /^STARTUP FAILED VG sign-in failed: .*403.*role grant/)
+})
+
+// Under fake time: a slow check runs to its timeout, sleep advances the clock, and every attempt and sleep
+// is recorded with its start time. The whole start-up shares one 80-second budget.
+function timed({ vgFailures, lglFailures }) {
+  let t = START
+  const log = []
+  let vgN = 0
+  let lglN = 0
+  const s = setup({
+    whoAmI: (opts) => {
+      log.push({ at: t, what: 'vg', timeoutMs: opts.timeoutMs })
+      if (++vgN <= vgFailures) { t += opts.timeoutMs; throw new Error('VG GET /user timed out') }
+      return { username: 'vg-sync' }
+    },
+    probe: (opts) => {
+      log.push({ at: t, what: 'lgl', timeoutMs: opts.timeoutMs })
+      if (++lglN <= lglFailures) { t += opts.timeoutMs; throw new Error('LGL GET /constituents.json timed out') }
+      return { rateLimited: false }
+    },
+  })
+  const deps = { ...s.deps, now: () => t, sleep: async (ms) => { log.push({ at: t, what: 'sleep', ms }); t += ms } }
+  return { s, deps, log, elapsed: () => t - START }
+}
+
+test('start-up checks share one budget: VG slow twice then fine, LGL failing, all inside the health gate', async () => {
+  const x = timed({ vgFailures: 2, lglFailures: Infinity })
+  assert.equal(await startService(x.deps), null)
+  assert.equal(x.s.out[0], 'STARTUP VG signed in as vg-sync')
+  assert.match(x.s.out.at(-1), /^STARTUP FAILED LGL not reached: /)
+  assert.ok(x.elapsed() <= 80_000, `${x.elapsed()} ms`)
+  for (const e of x.log) assert.ok(e.at < START + 80_000, JSON.stringify(e))
+  for (const e of x.log.filter((e) => e.what !== 'sleep')) assert.ok(e.timeoutMs <= 15_000 && e.timeoutMs <= START + 80_000 - e.at)
+  // VG used 70 s; LGL got the 10 s left for one try, and no sleep that would end past the budget
+  assert.deepEqual(x.log.filter((e) => e.what === 'lgl').map((e) => e.timeoutMs), [10_000])
+})
+
+test('the worst start-up failure of either check alone, or both, ends inside the health gate', async () => {
+  for (const [vgFailures, lglFailures] of [[Infinity, 0], [0, Infinity], [2, Infinity], [1, Infinity], [2, 2]]) {
+    const x = timed({ vgFailures, lglFailures })
+    const svc = await startService(x.deps)
+    assert.ok(x.elapsed() <= 80_000, `${vgFailures}/${lglFailures}: ${x.elapsed()} ms`)
+    for (const e of x.log) assert.ok(e.at < START + 80_000, `${vgFailures}/${lglFailures}: ${JSON.stringify(e)}`)
+    if (svc) await svc.stop()
+    else assert.match(x.s.out.at(-1), /^STARTUP FAILED (VG sign-in failed|LGL not reached): /)
   }
+})
+
+test('when the budget runs out the failure names the check and its last error', async () => {
+  const x = timed({ vgFailures: 2, lglFailures: Infinity })
+  await startService(x.deps)
+  assert.match(x.s.out.at(-1), /^STARTUP FAILED LGL not reached: start-up time ran out \(80 s\); last error: LGL GET \/constituents\.json timed out$/)
 })
 
 test('a pass past its ceiling is aborted with timeout', async () => {

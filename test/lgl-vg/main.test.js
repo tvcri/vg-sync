@@ -343,10 +343,17 @@ function serviceHarness(o = {}) {
   h.deps.setTimer = () => { timers.add(++id); return id }
   h.deps.clearTimer = (i) => { timers.delete(i) }
   h.deps.fs = { readdir: async () => [], stat: async () => ({ mtimeMs: NOW }), unlink: async () => {} }
-  // Resolves once the scheduler has started (the handlers are registered before start-up).
+  // Resolves once the scheduler has started (the handlers are registered before start-up); fails if
+  // start-up failed or did not finish within a bounded number of turns.
   const started = async () => {
     await ready
-    while (!h.out.some((l) => l.startsWith('STARTUP scheduler started'))) await new Promise((r) => setImmediate(r))
+    for (let turn = 0; turn < 1000; turn++) {
+      const failed = h.out.find((l) => l.startsWith('STARTUP FAILED'))
+      if (failed) assert.fail(`start-up failed: ${failed}`)
+      if (h.out.some((l) => l.startsWith('STARTUP scheduler started'))) return
+      await new Promise((r) => setImmediate(r))
+    }
+    assert.fail(`start-up did not finish; output so far:\n${h.out.join('\n')}`)
   }
   return { ...h, handlers, ready, started, timers }
 }
@@ -400,6 +407,35 @@ test('the service returns 1 after a refused sign-in, tried once', async () => {
   assert.equal(await run([], h.deps), 1)
   assert.match(h.out.at(-1), /^STARTUP FAILED /)
   assert.equal(h.calls.filter((c) => c.includes('auth.example.org')).length, 1)
+})
+
+test('a start-up that rejects prints STARTUP FAILED and returns 1', async () => {
+  const h = serviceHarness({ lgl: false })
+  h.deps.startService = async ({ stdout }) => {
+    stdout('STARTUP VG signed in as service-account-vg-sync')
+    stdout('STARTUP LGL reached')
+    throw new Error('the scheduler would not start')
+  }
+  assert.equal(await run([], h.deps), 1)
+  assert.equal(h.out.at(-1), 'STARTUP FAILED the scheduler would not start')
+})
+
+test('a signal while the policy is read stops at once, without starting', async () => {
+  const h = serviceHarness({ lgl: false })
+  let release
+  const read = h.deps.readFile
+  h.deps.readFile = (p) => new Promise((resolve) => { release = () => resolve(read(p)) })
+  let startCalled = false
+  h.deps.startService = async () => { startCalled = true; return null }
+  const done = run([], h.deps)
+  await h.ready
+  h.handlers.SIGTERM()
+  release()
+  assert.equal(await done, 0)
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r))
+  assert.equal(startCalled, false)
+  assert.deepEqual(h.out, ['STOPPING', 'STOPPED'])
+  assert.deepEqual(h.calls, [])
 })
 
 test('a signal during start-up stops at once: STOPPING, STOPPED, exit 0', async () => {

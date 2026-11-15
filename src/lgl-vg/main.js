@@ -219,7 +219,7 @@ async function setup(argv, { env, fetchImpl = fetch, now, stdout }) {
 // stops at once, since nothing has been written yet; the caller exits, abandoning the checks in flight.
 async function service({
   env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read,
-  onSignal, setTimer, clearTimer, fs,
+  onSignal, setTimer, clearTimer, fs, startService: start = startService,
 }) {
   let svc = null
   let stopping = false
@@ -246,11 +246,16 @@ async function service({
     stdout(`STARTUP FAILED ${err.message}`)
     return 1
   }
-  startService({ config, policy, vg, lgl, stdout, now, setTimer, clearTimer, sleep, writeLines: write, fs })
+  if (stopping) return finished // a signal arrived while the config and policy were loaded
+  start({ config, policy, vg, lgl, stdout, now, setTimer, clearTimer, sleep, writeLines: write, fs })
     .then(async (started) => {
       if (stopping) await started?.stop() // stopped during start-up: stop the scheduler it just started
       else if (!started) finish(1)
       else svc = started
+    })
+    .catch((err) => {
+      stdout(`STARTUP FAILED ${err?.message ?? err}`)
+      finish(1)
     })
   return finished
 }
