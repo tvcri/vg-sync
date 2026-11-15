@@ -4,6 +4,7 @@ import { planLinked } from './plan.js'
 import { planUnlinked } from './unlinked.js'
 import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
+import { createStopper } from './abort.js'
 
 const FIVE_MINUTES = 5 * 60 * 1000
 
@@ -28,18 +29,7 @@ export async function runFullPass({
   const mode = writeVg ? 'write-vg' : 'dry-run'
 
   const minutes = config.passTimeoutMinutes
-  // Any abort reason other than 'timeout' is treated as a shutdown.
-  const timedOut = () => signal?.reason === 'timeout'
-  const stopError = () => Object.assign(new Error(timedOut() ? `timed out after ${minutes} minutes` : 'stopped by shutdown'), { stop: true })
-  const checkStop = () => { if (signal?.aborted) throw stopError() }
-  // A read is abandoned the moment the signal fires: nothing has been written, so nothing is lost.
-  const read = (promise) => {
-    if (!signal) return promise
-    if (signal.aborted) { promise.catch(() => {}); throw stopError() }
-    let onAbort
-    const stop = new Promise((_, reject) => { onAbort = () => reject(stopError()); signal.addEventListener('abort', onAbort, { once: true }) })
-    return Promise.race([promise, stop]).finally(() => signal.removeEventListener('abort', onAbort))
-  }
+  const { read, checkStop, stopError, timedOut } = createStopper(signal, { label: 'full', minutes })
   let result
 
   const saveDecisions = async () => {
