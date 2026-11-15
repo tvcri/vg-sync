@@ -273,7 +273,9 @@ not change, since a gift does not move the constituent's `updated_at`.
   the VG check succeeds, fails or finds nothing, so a VG outage does not
   also hold back the LGL check. When a change is found while the count is
   at fifteen, it drops to five. If five or more ticks have passed since the
-  last LGL check, the LGL check runs on the next tick.
+  last LGL check, the LGL check runs on that same tick, right after the VG
+  check that found the change. **(call, at build)** The build ran it on the
+  same tick, a minute sooner than "the next tick" written here first.
 - **The two checks stay separate inside a tick.** Each has its own
   ceiling, cursor, failure tracking and log lines. A failed or stopped VG
   check does not skip the LGL check due on the same tick, unless the
@@ -442,6 +444,50 @@ constants.
    - `docker compose stop` during a check ends cleanly.
 
    Snapshot the dev database before the first write.
+
+### What the rehearsal showed (2026-11-15)
+
+1. **Unit tests** pass (572).
+2. **The harness:** 44 of 44 scenarios (the 38 earlier ones, and the five
+   step 6 scenarios, the last of them as a pair of scenarios), with the dev
+   database at the generator's migration and snapshotted first. As the
+   builder expected, the LGL check's window (two minutes before the
+   cursor, which the full pass set five minutes back) re-reads every pair
+   seeded in the minutes before, so the gift and hold scenarios pass through
+   the constituent read, not only the gift read. Narrowing itself rests on
+   the unit tests.
+3. **The container,** built locally, on the harness's invented data with
+   `WRITE_VG=true`:
+   - the start-up pass's `PASS OK`, then the first VG check a minute later;
+   - an LGL first-name edit and a VG email edit made together: the next VG
+     check printed `CHECK OK vg-check … writes=1 deferred=1`. The VG edit
+     touched the pair, the check read the constituent fresh from LGL, and
+     so it carried the LGL name to VG as well, a check earlier than the LGL
+     check would have;
+   - the following VG check printed `deferred=1` once more and the ones
+     after it were quiet. The check's own write to VG is an audited change,
+     so it touches the same person once again; that second check writes
+     nothing, so it does not repeat;
+   - the LGL check on the fifth tick (`CHECK OK lgl-check … deferred=1`,
+     nothing to write), and `SYNC ALIVE` with `last-vg-check`,
+     `last-lgl-check` and `lgl-every=5m`;
+   - a second LGL first-name edit, alone, reached VG on the tenth tick
+     (`CHECK OK lgl-check … writes=1`);
+   - `docker compose stop` gave `STOPPING`, `STOPPED`, exit 0, no `PASS
+     FAILED`. A check on this data takes about 0.3 seconds, so the stop
+     landed between ticks; a stop inside a check rests on the unit tests,
+     as in step 5.
+4. **Production, dry,** on a production snapshot restored into the dev
+   database (service account set up again), against production LGL:
+   - `--once full`: exit 0; 30 writes, 259 deferred, 1 link, 317 holds
+     planned (no holds seeded on this snapshot);
+   - `--once vg-check --after <a week back>`: exit 0; 366 linked people
+     touched; 27 writes, 259 deferred, 119 holds opened. It took about 12
+     minutes: by hand there is no 20-read limit, and two LGL reads per
+     constituent meet LGL's rate limit. A wide window by hand is better
+     served by `--once full`;
+   - `--once lgl-check --since <a week back>`: exit 0; 2 people, 2 writes,
+     2 deferred, 3 holds opened.
 
 ## Left to the builder
 
