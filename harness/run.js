@@ -3,7 +3,7 @@
 // against the LGL trial account and the dev VG, one real service pass per phase.
 //
 //   npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only]
-//   (--step defaults to 4)
+//   (--step defaults to 6)
 //
 // Every run reseeds unless --resume. Records are left in place after a run for
 // inspection; the next run wipes them first. planRun is pure and unit-tested;
@@ -35,7 +35,7 @@ const asList = (v) => (v === undefined || v === null ? [] : [].concat(v))
 // --- Pure parts -------------------------------------------------------------
 
 export function parseArgs (argv) {
-  const opts = { only: null, step: 4, overnight: false, resume: false, guardsOnly: false }
+  const opts = { only: null, step: 6, overnight: false, resume: false, guardsOnly: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--overnight') opts.overnight = true
@@ -58,10 +58,21 @@ export function parseArgs (argv) {
 // phase every scenario's edit, then its wait, then one pass, then a check of
 // every scenario in the group (a phase past a scenario's end checks it is
 // undisturbed). Then each runAlone scenario: its own reseed and its own passes.
+// runAlone scenarios that share a group name (runAlone: 'name') run as one
+// group, in lockstep with each other only, where the first of them stands.
 // phaseCount is the lockstep group's (the runAlone scenarios have their own).
+// A pass step's `run` is what the phase runs ('full', 'lgl-check' or 'vg-check';
+// 'full' when no scenario in the group names one); scenarios of one group that
+// name different runs for the same phase are an error.
 export function planRun ({ selected, phaseCount: count }) {
   const lockstep = selected.filter((s) => !s.runAlone)
-  const alone = selected.filter((s) => s.runAlone)
+  const alone = []
+  const named = new Map()
+  for (const s of selected.filter((x) => x.runAlone)) {
+    if (s.runAlone === true) { alone.push([s]); continue }
+    if (!named.has(s.runAlone)) { named.set(s.runAlone, []); alone.push(named.get(s.runAlone)) }
+    named.get(s.runAlone).push(s)
+  }
   const steps = []
   let pass = 0
   const group = (scenarios, n) => {
@@ -76,14 +87,16 @@ export function planRun ({ selected, phaseCount: count }) {
         const a = asList(s.phases[p]?.args).map(String)
         if (a.length && !includesRun(args, a)) args.push(...a)
       }
+      const runs = [...new Set(scenarios.map((s) => s.phases[p]?.run).filter((r) => r !== undefined))]
+      if (runs.length > 1) throw new Error(`Scenarios ${scenarios.map((s) => s.name).join(', ')} name different runs for phase ${p + 1}: ${runs.join(', ')}`)
       pass++
       const expectFail = scenarios.some((s) => s.phases[p]?.expect?.passFails === true)
-      steps.push({ kind: 'pass', pass, phase: p, args, expectFail })
+      steps.push({ kind: 'pass', pass, phase: p, run: runs[0] ?? 'full', args, expectFail })
       for (const s of scenarios) steps.push({ kind: 'check', scenario: s.name, phase: p, pass })
     }
   }
   if (lockstep.length) group(lockstep, count ?? phaseCount(lockstep))
-  for (const s of alone) group([s], s.phases.length)
+  for (const g of alone) group(g, phaseCount(g))
   return steps
 }
 
@@ -146,8 +159,8 @@ async function loadScenarioModules () {
   return modules
 }
 
-// Runs one pass as a child process; its output goes to the screen and to the log.
-function runPass ({ dir, args, log, command = ['--once', 'full', '--out', dir], logName = `${basename(dir)}.log` }) {
+// Runs one pass (or one change check) as a child process; its output goes to the screen and to the log.
+function runPass ({ dir, args, log, run = 'full', command = ['--once', run, '--out', dir], logName = `${basename(dir)}.log` }) {
   const exampleText = readFileSync(join(REPO, '.env.harness.example'), 'utf8')
   const argv = ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', ...args]
   log(`$ node ${argv.join(' ')}`)
@@ -161,8 +174,12 @@ function runPass ({ dir, args, log, command = ['--once', 'full', '--out', dir], 
   })
 }
 
+// The pass's decisions: a full pass's full-*.jsonl or, failing that, a check's checks-*.jsonl
+// (a check that found nothing writes no file).
 async function readDecisions (dir) {
-  const files = (await readdir(dir)).filter((f) => /^full-.*\.jsonl$/.test(f)).sort()
+  const names = await readdir(dir)
+  let files = names.filter((f) => /^full-.*\.jsonl$/.test(f)).sort()
+  if (!files.length) files = names.filter((f) => /^checks-.*\.jsonl$/.test(f)).sort()
   if (!files.length) return null
   const text = await readFile(join(dir, files[files.length - 1]), 'utf8')
   return text.split('\n').filter(Boolean).map((l) => JSON.parse(l))
@@ -336,9 +353,9 @@ export async function main (argv, { log = console.log } = {}) {
     } else if (step.kind === 'pass') {
       const dir = join(outDir, `pass-${step.pass}`)
       await mkdir(dir, { recursive: true })
-      log(`\n== Pass ${step.pass} (phase ${step.phase + 1})`)
+      log(`\n== Pass ${step.pass} (phase ${step.phase + 1}, ${step.run})`)
       const passStartedAt = new Date().toISOString()
-      const code = await runPass({ dir, args: step.args, log })
+      const code = await runPass({ dir, args: step.args, log, run: step.run })
       if (step.expectFail) log(`Pass ${step.pass} was expected to fail; it exited ${code}`)
       else if (code !== 0) passFailures.push({ pass: step.pass, code })
       const decisions = await readDecisions(dir)

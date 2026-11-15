@@ -59,7 +59,7 @@ test('phase args from the lockstep group are merged once', () => {
 })
 
 test('parseArgs reads the flags', () => {
-  assert.deepEqual(parseArgs([]), { only: null, step: 4, overnight: false, resume: false, guardsOnly: false })
+  assert.deepEqual(parseArgs([]), { only: null, step: 6, overnight: false, resume: false, guardsOnly: false })
   const o = parseArgs(['--only', 'smoke', '--only', 'names', '--step', '4', '--overnight', '--resume', '--guards-only'])
   assert.deepEqual(o, { only: ['smoke', 'names'], step: 4, overnight: true, resume: true, guardsOnly: true })
   assert.throws(() => parseArgs(['--step', 'x']), /--step/)
@@ -145,4 +145,33 @@ test('scenarioRows takes holds naming the scenario\'s constituent, with or witho
   const { scenarioRows } = await import('../../harness/run.js')
   const holds = [{ personId: '500', lglConstituentId: '2' }, { personId: null, lglConstituentId: '2' }, { personId: '9', lglConstituentId: '3' }]
   assert.equal(scenarioRows({ constituentId: 2, personIds: [] }, { decisions: [], holds }).holds.length, 2)
+})
+
+test('planRun puts the run kind on the pass step', () => {
+  const s = { name: 'c', runAlone: true, phases: [{ run: 'full' }, { run: 'lgl-check' }, { run: 'vg-check' }, {}] }
+  const passes = planRun({ selected: [s] }).filter((x) => x.kind === 'pass')
+  assert.deepEqual(passes.map((p) => p.run), ['full', 'lgl-check', 'vg-check', 'full'])
+  const lockstep = planRun({ selected: [scen('a', 1)], phaseCount: 1 }).find((x) => x.kind === 'pass')
+  assert.equal(lockstep.run, 'full')
+})
+
+test('runAlone scenarios with the same group name share a reseed and their passes', () => {
+  const held = { name: 'held', runAlone: 'pair', phases: [{ run: 'full' }, { run: 'lgl-check' }] }
+  const edited = { name: 'edited', runAlone: 'pair', phases: [{ run: 'full' }, { run: 'lgl-check', edit: { lgl: {} } }] }
+  const solo = { name: 'solo', runAlone: true, phases: [{ run: 'full' }] }
+  const steps = planRun({ selected: [held, solo, edited] })
+  assert.deepEqual(kinds(steps), ['reseed', 'pass', 'check', 'check', 'edit', 'pass', 'check', 'check', 'reseed', 'pass', 'check'])
+  assert.deepEqual(steps[0].scenarios, ['held', 'edited'])
+  assert.deepEqual(steps[8].scenarios, ['solo'])
+  assert.deepEqual(steps.filter((x) => x.kind === 'pass').map((p) => p.run), ['full', 'lgl-check', 'full'])
+})
+
+test('planRun rejects a group whose scenarios name different runs for one phase', () => {
+  const a = { name: 'a', runAlone: 'pair', phases: [{ run: 'lgl-check' }] }
+  const b = { name: 'b', runAlone: 'pair', phases: [{ run: 'vg-check' }] }
+  assert.throws(() => planRun({ selected: [a, b] }), /phase 1.*lgl-check.*vg-check/)
+})
+
+test('parseArgs: --step defaults to 6', () => {
+  assert.equal(parseArgs([]).step, 6)
 })

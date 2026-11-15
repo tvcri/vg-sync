@@ -5,6 +5,9 @@ const SCENARIO_KEYS = new Set(['name', 'why', 'since', 'vg', 'lgl', 'gifts', 'li
 export const IMPORT_DECISIONS = new Set(['staff-skip', 'horizon-skip', 'hold'])
 const PHASE_KEYS = new Set(['run', 'edit', 'wait', 'args', 'expect', 'known'])
 const REQUIRED = ['name', 'why', 'since', 'phases']
+// What a phase's pass runs: the full pass, or one change check (step 6). A check reads the cursor the
+// scenario's own earlier full pass set, so a check phase belongs only to a scenario that runs alone.
+export const RUNS = new Set(['full', 'lgl-check', 'vg-check'])
 
 // '-30d', '+0d', '-2y' from today ('YYYY-MM-DD'); a literal 'YYYY-MM-DD' passes through.
 export function resolveDate (spec, today) {
@@ -35,6 +38,9 @@ export function loadScenarios (modules) {
       for (const k of Object.keys(s)) {
         if (!SCENARIO_KEYS.has(k)) throw new Error(`Scenario "${s.name}" has an unknown key "${k}"`)
       }
+      if (s.runAlone !== undefined && s.runAlone !== true && s.runAlone !== false && (typeof s.runAlone !== 'string' || !s.runAlone.trim())) {
+        throw new Error(`Scenario "${s.name}": runAlone must be true or a group name`)
+      }
       if (!Array.isArray(s.phases)) throw new Error(`Scenario "${s.name}": phases must be a list`)
       if (s.importDecision !== undefined && !IMPORT_DECISIONS.has(s.importDecision)) {
         throw new Error(`Scenario "${s.name}": importDecision must be one of ${[...IMPORT_DECISIONS].join(', ')}`)
@@ -44,7 +50,8 @@ export function loadScenarios (modules) {
         for (const k of Object.keys(p ?? {})) {
           if (!PHASE_KEYS.has(k)) throw new Error(`Scenario "${s.name}" phase ${i + 1} has an unknown key "${k}"`)
         }
-        if (p.run !== undefined && p.run !== 'full') throw new Error(`Scenario "${s.name}" phase ${i + 1}: run must be 'full', not ${JSON.stringify(p.run)}`)
+        if (p.run !== undefined && !RUNS.has(p.run)) throw new Error(`Scenario "${s.name}" phase ${i + 1}: run must be one of ${[...RUNS].join(', ')}, not ${JSON.stringify(p.run)}`)
+        if (p.run !== undefined && p.run !== 'full' && !s.runAlone) throw new Error(`Scenario "${s.name}" phase ${i + 1}: run ${p.run} is allowed only on a runAlone scenario`)
         // Phase args and an expected pass failure change the pass for everyone in it, so they belong
         // only to a scenario that runs alone.
         if (p.args !== undefined && !s.runAlone) throw new Error(`Scenario "${s.name}" phase ${i + 1}: args are allowed only on a runAlone scenario`)
@@ -61,7 +68,7 @@ export function loadScenarios (modules) {
   return list
 }
 
-export function selectScenarios (list, { only, step = 4, overnight = false } = {}) {
+export function selectScenarios (list, { only, step = 6, overnight = false } = {}) {
   const wanted = only == null ? null : [].concat(only)
   const selected = []
   const skipped = []

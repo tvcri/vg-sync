@@ -190,7 +190,7 @@ npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--g
 - `--only` runs the named scenario or every scenario in an area (a file name
   under `harness/scenarios/`); it may be repeated. A value that matches
   nothing is an error.
-- `--step N` is the build step (default 3): scenarios with a later `since`
+- `--step N` is the build step (default 6): scenarios with a later `since`
   are skipped, and the runner says so.
 - `--overnight` includes scenarios that wait for LGL's overnight jobs; the run
   stops at such a wait and saves its state.

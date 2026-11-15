@@ -174,12 +174,19 @@ export default [
 - **`phases`** run in order. Each may first `edit` either system (as staff
   would, through each system's API; `edit.vg.lastGiftDate` sets the donor
   row's date, for a scenario that needs VG to start with an old one),
-  `wait` (see "LGL's own jobs"), then `run` a pass (`'full'` is the only
-  value), then `expect`. A phase's `args` (extra command-line options for the
+  `wait` (see "LGL's own jobs"), then `run` a pass (`'full'`, or from
+  step 6 one change check, `'lgl-check'` or `'vg-check'`, run by hand as
+  `--once <run>`), then `expect`. A check reads the cursor its scenario's
+  own earlier full pass set, so a check phase is allowed only in a
+  `runAlone` scenario. A check that found nothing writes no decisions file,
+  which reads as no decisions. A phase's `args` (extra command-line options for the
   pass, such as `--max-people 1`) are allowed only in a `runAlone` scenario.
 - **`runAlone`** scenarios do not join the lockstep. Each gets its own
   reseed of the whole VG and only its own LGL records, and its own passes,
-  after the lockstep group.
+  after the lockstep group. `runAlone` may instead be a group name: the
+  scenarios that share it get one reseed and run in lockstep with each
+  other only (step 6's "a hold on a pair the check did not touch" needs two
+  pairs). They must name the same `run` for each phase.
 - **`known`**, on a scenario or a phase, marks a failure that is a finding
   for the engineer and not a regression. A scenario that fails only in known
   phases reports `KNOWN` with its note, and does not fail the run. A known
