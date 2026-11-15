@@ -343,13 +343,18 @@ function serviceHarness(o = {}) {
   h.deps.setTimer = () => { timers.add(++id); return id }
   h.deps.clearTimer = (i) => { timers.delete(i) }
   h.deps.fs = { readdir: async () => [], stat: async () => ({ mtimeMs: NOW }), unlink: async () => {} }
-  return { ...h, handlers, ready, timers }
+  // Resolves once the scheduler has started (the handlers are registered before start-up).
+  const started = async () => {
+    await ready
+    while (!h.out.some((l) => l.startsWith('STARTUP scheduler started'))) await new Promise((r) => setImmediate(r))
+  }
+  return { ...h, handlers, ready, started, timers }
 }
 
 test('no command starts the service and SIGTERM stops it', async () => {
   const h = serviceHarness()
   const done = run([], h.deps)
-  await h.ready
+  await h.started()
   assert.deepEqual(h.out.slice(0, 3), [
     'STARTUP VG signed in as service-account-vg-sync',
     'STARTUP LGL reached',
@@ -367,7 +372,7 @@ test('no command starts the service and SIGTERM stops it', async () => {
 test('a second signal while stopping does nothing more', async () => {
   const h = serviceHarness()
   const done = run([], h.deps)
-  await h.ready
+  await h.started()
   h.handlers.SIGINT()
   h.handlers.SIGTERM()
   assert.equal(await done, 0)
@@ -395,4 +400,16 @@ test('the service returns 1 after a refused sign-in, tried once', async () => {
   assert.equal(await run([], h.deps), 1)
   assert.match(h.out.at(-1), /^STARTUP FAILED /)
   assert.equal(h.calls.filter((c) => c.includes('auth.example.org')).length, 1)
+})
+
+test('a signal during start-up stops at once: STOPPING, STOPPED, exit 0', async () => {
+  const h = serviceHarness({ lgl: false })
+  const fetchImpl = h.deps.fetchImpl
+  h.deps.fetchImpl = (url, init) => new URL(url).hostname === 'auth.example.org' ? new Promise(() => {}) : fetchImpl(url, init)
+  const done = run([], h.deps)
+  await h.ready
+  h.handlers.SIGTERM()
+  h.handlers.SIGINT()
+  assert.equal(await done, 0)
+  assert.deepEqual(h.out, ['STOPPING', 'STOPPED'])
 })

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { startService, pruneDecisions } from '../../src/lgl-vg/service.js'
 import { parsePolicy } from '../../src/lgl-vg/policy.js'
+import { PROBE_TIMEOUT_MS } from '../../src/lgl-vg/lgl.js'
 
 const policy = parsePolicy(readFileSync(new URL('../../policy.json', import.meta.url), 'utf8'))
 const START = Date.parse('2026-11-12T10:00:00.000Z')
@@ -49,7 +50,7 @@ function setup({ whoAmI, probe, pullConstituents = hang } = {}) {
   const sleeps = []
   const calls = { whoAmI: 0, probe: 0 }
   const vg = {
-    whoAmI: async () => { calls.whoAmI++; return whoAmI ? whoAmI() : { username: 'vg-sync', userId: 1 } },
+    whoAmI: async (opts) => { calls.whoAmI++; calls.firstWhoAmIOpts ??= opts; return whoAmI ? whoAmI(opts) : { username: 'vg-sync', userId: 1 } },
     listPersons: async () => [],
     getSyncFields: async () => [],
     getSyncHolds: async () => [],
@@ -116,6 +117,27 @@ test('startup retries LGL and succeeds on the third try', async () => {
   assert.deepEqual(s.sleeps, [20000, 20000])
   assert.equal(s.out[1], 'STARTUP LGL reached')
   await svc.stop()
+})
+
+test('startup asks VG with a 15-second timeout for the whole call', async () => {
+  const s = setup()
+  const svc = await startService(s.deps)
+  assert.deepEqual(s.calls.firstWhoAmIOpts, { timeoutMs: 15_000 })
+  await svc.stop()
+})
+
+// Under fake time: every check runs to its timeout (VG's default is 60 s), and sleep advances the clock.
+test('the worst start-up failure ends within the deployer\'s 90-second health gate', async () => {
+  for (const failing of ['vg', 'lgl']) {
+    let t = 0
+    const s = setup({
+      whoAmI: (opts) => { if (failing === 'vg') { t += opts?.timeoutMs ?? 60_000; throw new Error('timed out') } return { username: 'vg-sync' } },
+      probe: () => { t += PROBE_TIMEOUT_MS; throw new Error('timed out') },
+    })
+    assert.equal(await startService({ ...s.deps, sleep: async (ms) => { t += ms } }), null)
+    assert.match(s.out.at(-1), /^STARTUP FAILED /)
+    assert.ok(t <= 90_000, `${failing}: ${t} ms`)
+  }
 })
 
 test('a pass past its ceiling is aborted with timeout', async () => {

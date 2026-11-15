@@ -12,6 +12,9 @@ import { createScheduler } from './scheduler.js'
 const DAY_MS = 86_400_000
 const STARTUP_TRIES = 3
 const STARTUP_DELAY_MS = 20_000
+// Each start-up check is one attempt with a short timeout (the LGL probe has its own, also 15 s), so the
+// tries above are the only retries: 3 × 15 s + 2 × 20 s = 85 s, inside the deployer's 90-second health gate.
+const STARTUP_TIMEOUT_MS = 15_000
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const defaultFs = { readdir: fsReaddir, stat: fsStat, unlink: fsUnlink }
 
@@ -37,7 +40,8 @@ export async function pruneDecisions({ dir, keepDays, now, readdir, stat, unlink
   return deleted
 }
 
-// Tries fn three times in all, 20 seconds apart. A final error (a refused sign-in) is not retried.
+// Tries fn three times in all, 20 seconds apart. A final error (a refused sign-in, a bad LGL key) is not
+// retried.
 async function withTries(fn, sleep) {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -56,7 +60,7 @@ export async function startService({
   try {
     let me
     try {
-      me = await withTries(() => vg.whoAmI(), sleep)
+      me = await withTries(() => vg.whoAmI({ timeoutMs: STARTUP_TIMEOUT_MS }), sleep)
     } catch (err) {
       throw new Error(`VG sign-in failed: ${err?.message ?? err}`)
     }

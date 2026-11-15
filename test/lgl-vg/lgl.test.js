@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createLglClient } from '../../src/lgl-vg/lgl.js'
+import { createLglClient, PROBE_TIMEOUT_MS } from '../../src/lgl-vg/lgl.js'
 
 // A fake fetch that serves a queue of canned responses and records each call.
 function fakeFetch(responses, calls = []) {
@@ -168,4 +168,51 @@ test('probe asks for one constituent', async () => {
   assert.equal(await lgl.probe(), undefined)
   assert.equal(calls[0].url.pathname, '/api/v1/constituents.json')
   assert.equal(calls[0].url.searchParams.get('limit'), '1')
+})
+
+test('probe makes one attempt: a 429 fails at once, without waiting', async () => {
+  const sleeps = []
+  const calls = []
+  const lgl = createLglClient({
+    apiKey: 'k',
+    sleep: recordSleeps(sleeps),
+    fetchImpl: fakeFetch([{ status: 429, headers: { 'retry-after': '300' } }, { body: { items: [], total_items: 0 } }], calls),
+  })
+  await assert.rejects(lgl.probe(), /429/)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(sleeps, [])
+})
+
+test('probe makes one attempt: a rejected fetch fails at once', async () => {
+  let n = 0
+  const sleeps = []
+  const lgl = createLglClient({
+    apiKey: 'k',
+    sleep: recordSleeps(sleeps),
+    fetchImpl: async () => { n++; throw new TypeError('fetch failed') },
+  })
+  await assert.rejects(lgl.probe(), /fetch failed/)
+  assert.equal(n, 1)
+  assert.deepEqual(sleeps, [])
+})
+
+test('probe has its own short timeout, 15 seconds by default', async () => {
+  assert.equal(PROBE_TIMEOUT_MS, 15_000)
+  let n = 0
+  const hang = hangingFetch()
+  const lgl = createLglClient({
+    apiKey: 'k', sleep: noSleep, timeoutMs: 600_000, probeTimeoutMs: 20,
+    fetchImpl: (url, init) => { n++; return hang(url, init) },
+  })
+  await assert.rejects(lgl.probe(), /timed out after 0.02 s/)
+  assert.equal(n, 1)
+})
+
+test('a 401 or 403 (a bad API key) is final; a 404 is not', async () => {
+  for (const status of [401, 403]) {
+    const lgl = createLglClient({ apiKey: 'k', sleep: noSleep, fetchImpl: fakeFetch([{ status }]) })
+    await assert.rejects(lgl.pullGifts(), (err) => err.final === true && err.status === status)
+  }
+  const lgl = createLglClient({ apiKey: 'k', sleep: noSleep, fetchImpl: fakeFetch([{ status: 404 }]) })
+  await assert.rejects(lgl.pullGifts(), (err) => !err.final && err.status === 404)
 })

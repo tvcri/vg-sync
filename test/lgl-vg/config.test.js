@@ -75,3 +75,9 @@ test('PASS_TIMEOUT_MINUTES and DECISIONS_KEEP_DAYS are positive whole numbers', 
   const c = loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '5', DECISIONS_KEEP_DAYS: '9' })
   assert.deepEqual([c.passTimeoutMinutes, c.decisionsKeepDays], [5, 9])
 })
+
+test('PASS_TIMEOUT_MINUTES is capped at 1440 (a day)', () => {
+  assert.equal(loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '1440' }).passTimeoutMinutes, 1440)
+  assert.throws(() => loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '1441' }), /PASS_TIMEOUT_MINUTES.*1440/)
+  assert.throws(() => loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '40000' }), /PASS_TIMEOUT_MINUTES.*1440/)
+})

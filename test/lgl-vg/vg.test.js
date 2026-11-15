@@ -341,3 +341,24 @@ test('recentRuns asks for all kinds', async () => {
   assert.deepEqual(await vg.recentRuns(), [{ id: 1 }])
   assert.equal(calls[1].url.pathname + calls[1].url.search, '/api/sync/runs?limit=20')
 })
+
+test('an API 403 (no role grant) is final; a 401 still refetches the token once', async () => {
+  await assert.rejects(make([tok(), { status: 403, body: 'forbidden' }]).listPersons(), (e) => e.status === 403 && e.final === true)
+  const calls = []
+  const vg = make([tok(1), { status: 401, body: 'expired' }, tok(2), { body: { ok: 1 } }], calls)
+  assert.deepEqual(await vg.whoAmI(), { ok: 1 })
+  assert.equal(calls.length, 4)
+  await assert.rejects(make([tok(), { status: 500, body: 'boom' }]).listPersons(), (e) => e.status === 500 && !e.final)
+})
+
+test('whoAmI takes a per-call timeout that bounds the whole call, token included', async () => {
+  const opts = { apiUrl: API, oidcUrl: OIDC, clientId: 'c', clientSecret: 's', scope: 'vg', timeoutMs: 600_000 }
+  const hang = hangingFetch()
+  const slowApi = createVgClient({
+    ...opts,
+    fetchImpl: (url, init) => url === TOKEN_URL ? Promise.resolve(new Response(JSON.stringify(tok().body))) : hang(url, init),
+  })
+  await assert.rejects(slowApi.whoAmI({ timeoutMs: 20 }), (err) => /VG GET \/api\/user timed out after 0.02 s/.test(err.message) && !err.final)
+  const slowToken = createVgClient({ ...opts, fetchImpl: hang })
+  await assert.rejects(slowToken.whoAmI({ timeoutMs: 20 }), /timed out after 0.02 s/)
+})

@@ -214,11 +214,28 @@ async function setup(argv, { env, fetchImpl = fetch, now, stdout }) {
 }
 
 // The service: start-up, then the scheduler until SIGTERM or SIGINT. Resolves 0 once stopped, 1 if it
-// could not start. The clients are created once and serve every pass.
+// could not start. The clients are created once and serve every pass. The signal handlers are registered
+// before start-up (a process with no handler that runs as PID 1 ignores SIGTERM): a signal during start-up
+// stops at once, since nothing has been written yet; the caller exits, abandoning the checks in flight.
 async function service({
   env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read,
   onSignal, setTimer, clearTimer, fs,
 }) {
+  let svc = null
+  let stopping = false
+  let finish
+  const finished = new Promise((resolve) => { finish = resolve })
+  const shutdown = async () => {
+    if (stopping) return
+    stopping = true
+    stdout('STOPPING')
+    if (svc) await svc.stop()
+    stdout('STOPPED')
+    finish(0)
+  }
+  onSignal('SIGTERM', shutdown)
+  onSignal('SIGINT', shutdown)
+
   let config, policy, vg, lgl
   try {
     config = loadConfig(env)
@@ -229,21 +246,13 @@ async function service({
     stdout(`STARTUP FAILED ${err.message}`)
     return 1
   }
-  const svc = await startService({ config, policy, vg, lgl, stdout, now, setTimer, clearTimer, sleep, writeLines: write, fs })
-  if (!svc) return 1
-  return new Promise((resolve) => {
-    let stopping = false
-    const shutdown = async () => {
-      if (stopping) return
-      stopping = true
-      stdout('STOPPING')
-      await svc.stop()
-      stdout('STOPPED')
-      resolve(0)
-    }
-    onSignal('SIGTERM', shutdown)
-    onSignal('SIGINT', shutdown)
-  })
+  startService({ config, policy, vg, lgl, stdout, now, setTimer, clearTimer, sleep, writeLines: write, fs })
+    .then(async (started) => {
+      if (stopping) await started?.stop() // stopped during start-up: stop the scheduler it just started
+      else if (!started) finish(1)
+      else svc = started
+    })
+  return finished
 }
 
 export async function run(argv, deps) {

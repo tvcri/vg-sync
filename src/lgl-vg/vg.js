@@ -24,19 +24,21 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
   let token = null
   let tokenExpiresAt = 0
 
-  // fetch with a deadline; an abort becomes a plain "timed out" error.
-  async function timedFetch(url, init) {
+  // fetch with a deadline; an abort becomes a plain "timed out" error. A call with its own timeout passes
+  // one deadline for all its fetches (token included); otherwise each fetch gets the client's timeout.
+  async function timedFetch(url, init, deadline) {
+    const ms = deadline?.ms ?? timeoutMs
     try {
-      return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+      return await fetchImpl(url, { ...init, signal: deadline?.signal ?? AbortSignal.timeout(ms) })
     } catch (err) {
       if (err?.name === 'TimeoutError') {
-        throw new Error(`VG ${init.method} ${new URL(url).pathname} timed out after ${timeoutMs / 1000} s`)
+        throw new Error(`VG ${init.method} ${new URL(url).pathname} timed out after ${ms / 1000} s`)
       }
       throw err
     }
   }
 
-  async function fetchToken() {
+  async function fetchToken(deadline) {
     const res = await timedFetch(`${oidcUrl}/protocol/openid-connect/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -46,7 +48,7 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
         client_secret: clientSecret,
         scope,
       }).toString(),
-    })
+    }, deadline)
     if (!res.ok) {
       const text = await res.text()
       throw httpError(`Keycloak token request → ${res.status}: ${text.slice(0, 200)}`, res.status, {
@@ -62,16 +64,19 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
     tokenExpiresAt = now() + body.expires_in * 1000 - EXPIRY_MARGIN_MS
   }
 
-  async function request(method, path, body) {
+  // A 403 means the account lacks a role grant, the privacy acknowledgement or the scope: retrying will
+  // not help, so the error is final. A 401 gets one fresh token first.
+  async function request(method, path, body, { timeoutMs: callTimeoutMs } = {}) {
+    const deadline = callTimeoutMs ? { ms: callTimeoutMs, signal: AbortSignal.timeout(callTimeoutMs) } : undefined
     for (let attempt = 0; ; attempt++) {
-      if (!token || now() >= tokenExpiresAt) await fetchToken()
+      if (!token || now() >= tokenExpiresAt) await fetchToken(deadline)
       const res = await timedFetch(`${apiUrl}${path}`, {
         method,
         headers: body === undefined
           ? { Authorization: `Bearer ${token}` }
           : { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
+      }, deadline)
       if (res.status === 401 && attempt === 0) {
         token = null
         continue
@@ -79,7 +84,9 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
       if (!res.ok) {
         const text = await res.text()
         const hint = res.status === 403 ? FORBIDDEN_HINT : ''
-        throw httpError(`VG ${method} ${path.split('?')[0]} → ${res.status}: ${text.slice(0, 200)}${hint}`, res.status)
+        throw httpError(`VG ${method} ${path.split('?')[0]} → ${res.status}: ${text.slice(0, 200)}${hint}`, res.status, {
+          final: res.status === 403,
+        })
       }
       if (res.status === 204) return null // DELETE answers with no body
       return res.json()
@@ -98,7 +105,8 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
   const sum = (results, key) => results.reduce((n, r) => n + r[key], 0)
 
   return {
-    whoAmI: () => get('/user'),
+    // { timeoutMs } bounds the whole call (start-up uses a short one).
+    whoAmI: ({ timeoutMs: callTimeoutMs } = {}) => request('GET', '/user', undefined, { timeoutMs: callTimeoutMs }),
     async privacyStatus() {
       return (await get('/user?projection=privacyStatus')).privacyStatus
     },

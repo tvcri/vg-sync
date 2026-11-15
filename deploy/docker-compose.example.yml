@@ -4,6 +4,8 @@ services:
     # Keep this line in the `repo@sha256:` form: the deployer rewrites it.
     image: carlsmig/vg-sync@sha256:<digest>  # <commit>
     restart: unless-stopped
+    # A tiny init as PID 1 forwards SIGTERM to node and reaps zombies.
+    init: true
     stop_grace_period: 30s
     # For the workstation rehearsal, reach the local database with:
     # network_mode: host

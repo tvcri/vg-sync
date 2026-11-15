@@ -48,6 +48,12 @@ function toPositive(env, name, fallback) {
   return n
 }
 
+function toBounded(env, name, fallback, max) {
+  const n = toPositive(env, name, fallback)
+  if (n > max) throw new Error(`${name} must be at most ${max}, got "${n}"`)
+  return n
+}
+
 function toClock(env, name, fallback) {
   if (!present(env[name])) return fallback
   const s = String(env[name]).trim()
@@ -83,7 +89,8 @@ export function loadConfig(env = process.env) {
     fullPassUtc: toClock(env, 'FULL_PASS_UTC', '07:00'),
     outDir: present(env.OUT_DIR) ? String(env.OUT_DIR).trim() : 'out',
     decisionsKeepDays: toPositive(env, 'DECISIONS_KEEP_DAYS', 30),
-    passTimeoutMinutes: toPositive(env, 'PASS_TIMEOUT_MINUTES', 30),
+    // Capped at a day: past about 35,791 minutes Node's timer would fire at once.
+    passTimeoutMinutes: toBounded(env, 'PASS_TIMEOUT_MINUTES', 30, 1440),
     imageRevision: present(env.IMAGE_REVISION) ? String(env.IMAGE_REVISION).trim() : null,
   }
 }
