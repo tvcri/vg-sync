@@ -136,7 +136,8 @@ run once by hand, dry unless `--write-vg`:
   else the newest run row's `lglCursor`). It first pulls every constituent and
   gift, as a full pass does, so it takes about as long as one.
 
-Both print the counts and a `CHECK OK <kind> <dry-run|write-vg> ...` line and
+Both print the counts and a `CHECK OK <kind> <dry-run|write-vg> ...` line (or
+`CHECK OK <kind> <mode> no changes` when there is nothing to decide) and
 exit 0, or print `CHECK FAILED <kind> <message>` and exit 1 at once (no
 15-minute rule). `--snapshot` and `--max-people` are not accepted; the check
 breaker uses `CIRCUIT_BREAKER_PEOPLE`.

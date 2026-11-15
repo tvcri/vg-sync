@@ -183,11 +183,20 @@ async function check(kind, argv, { env, fetchImpl = fetch, sleep, now, stdout, w
       state.cache = mergeLglChanges(null, { constituents, gifts }).cache
       extra = {}
     }
+    // A check that finds nothing prints nothing itself; by hand, say so (the service stays quiet).
+    let printedOk = false
+    const watch = (t) => {
+      if (String(t).startsWith('CHECK OK ')) printedOk = true
+      stdout(t)
+    }
     const result = await runCheck({
-      kind, state, config, policy, vg, lgl, writeVg: opts.writeVg, now, writeLines: write, stdout, out: opts.out,
+      kind, state, config, policy, vg, lgl, writeVg: opts.writeVg, now, writeLines: write, stdout: watch, out: opts.out,
       lglAttempts: 5, quiet: false, ...extra,
     })
-    if (result.outcome === 'ok') return 0
+    if (result.outcome === 'ok') {
+      if (!printedOk) stdout(`CHECK OK ${kind} ${opts.writeVg ? 'write-vg' : 'dry-run'} no changes`)
+      return 0
+    }
     // A by-hand check has no signal, so 'stopped' does not happen; if it did, it is reported as a failure too.
     stdout(`CHECK FAILED ${kind} ${result.error ?? result.outcome}`)
     return 1

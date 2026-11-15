@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { run, envFileFrom } from '../../src/lgl-vg/main.js'
+import { FIELDS, lglFields } from '../../src/lgl-vg/fields.js'
 
 const ENV = {
   LGL_API_KEY: 'lgl-key',
@@ -32,7 +33,8 @@ const persons = [
   },
 ]
 
-function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [] } = {}) {
+function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [], memory = [], acceptWrites = false } = {}) {
+  const requests = []
   const calls = []
   const out = []
   const written = []
@@ -53,8 +55,11 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
         posts.push(JSON.parse(init.body))
         return json({ rulesId: 4 }, 201)
       }
+      requests.push(`${init.method ?? 'GET'} ${u.pathname}`)
+      if (acceptWrites && init.method && init.method !== 'GET') return json(u.pathname === '/api/sync/runs' ? { runId: 1 } : {})
       if (u.pathname === '/api/sync/runs') return json(runs)
-      if (u.pathname === '/api/sync/fields' || u.pathname === '/api/sync/holds') return json([])
+      if (u.pathname === '/api/sync/fields') return json(memory)
+      if (u.pathname === '/api/sync/holds') return json([])
       if (u.pathname === '/api/sync/changes') return json(feed)
       if (u.pathname === '/api/persons') return json(personsBody ?? persons, personsStatus)
     }
@@ -83,7 +88,7 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
       return files[p]
     },
   }
-  return { deps, calls, out, written, posts }
+  return { deps, calls, out, written, posts, requests }
 }
 
 test('report signs in, pulls both systems, prints the summary and writes the detail file', async () => {
@@ -504,10 +509,60 @@ test('lgl-check takes --since and builds its cache before the check', async () =
   assert.ok(h.calls.some((c) => c.includes('/gifts/search') && !decodeURIComponent(c).includes('updated_from')))
 })
 
-test('a check by hand is dry without --write-vg', async () => {
-  const h = checkHarness({ feed: { lastAuditId: 9, more: false, persons: [{ personId: '10', changes: [] }] } })
+// A VG person whose first name agrees with the memory while LGL has moved on: a planned write to VG.
+function plannedWrite() {
+  const old = { ...constituents[0], first_name: 'Janet' }
+  const memory = FIELDS.map((field) => ({
+    personId: '10', field, lglConstituentId: '1', value: lglFields(old).values[field], lglEntryId: null, agreedAt: '2026-11-01T00:00:00Z',
+  }))
+  const person = { ...persons[0], detail: { ...persons[0].detail, firstName: 'Janet' } }
+  return { memory, personsBody: [person], acceptWrites: true, feed: { lastAuditId: 9, more: false, persons: [{ personId: '10', changes: [] }] } }
+}
+const isVgWrite = (r) => r.startsWith('PATCH ') || r.startsWith('PUT ') || (r.startsWith('POST ') && r.includes('/api/sync/'))
+
+test('a check by hand is dry without --write-vg and writes with it', async () => {
+  const dry = checkHarness(plannedWrite())
+  assert.equal(await run(['--once', 'vg-check', '--after', '4'], dry.deps), 0)
+  assert.match(dry.out.at(-1), /^CHECK OK vg-check dry-run people=1 writes=1 /)
+  assert.deepEqual(dry.requests.filter(isVgWrite), [])
+  assert.equal(dry.requests.some((r) => r.startsWith('POST /api/sync/runs')), false)
+
+  const wet = checkHarness(plannedWrite())
+  assert.equal(await run(['--once', 'vg-check', '--write-vg', '--after', '4'], wet.deps), 0)
+  assert.match(wet.out.at(-1), /^CHECK OK vg-check write-vg people=1 writes=1 /)
+  assert.ok(wet.requests.some((r) => r.startsWith('PATCH /api/persons/10')), wet.requests.join('\n'))
+  assert.ok(wet.requests.includes('POST /api/sync/runs'))
+})
+
+test('a check by hand that finds nothing says so', async () => {
+  const h = checkHarness()
   assert.equal(await run(['--once', 'vg-check', '--after', '4'], h.deps), 0)
-  assert.equal(h.written.some((w) => !w.path.startsWith('out/checks-')), false)
+  assert.deepEqual(h.out, ['CHECK OK vg-check dry-run no changes'])
+})
+
+test('a bad or missing check cursor exits 2 without any request', async () => {
+  const cases = [
+    [['--once', 'vg-check', '--after', 'abc'], /--after must be a whole number/],
+    [['--once', 'vg-check', '--after'], /--after needs a value/],
+    [['--once', 'lgl-check', '--since', 'not-a-date'], /--since must be an ISO time/],
+    [['--once', 'lgl-check', '--since'], /--since needs a value/],
+  ]
+  for (const [argv, re] of cases) {
+    const h = checkHarness({ lgl: false })
+    assert.equal(await run(argv, h.deps), 2, argv.join(' '))
+    assert.match(h.out.join('\n'), re)
+    assert.deepEqual(h.calls, [])
+  }
+})
+
+test('vg-check reads every touched constituent, past 20', async () => {
+  const n = 25
+  const people = Array.from({ length: n }, (_, k) => ({
+    ...persons[0], personId: 100 + k, donor: { lglConstituentId: String(500 + k), lastGiftDate: '2025-06-01' },
+  }))
+  const h = checkHarness({ personsBody: people, feed: { lastAuditId: 9, more: false, persons: people.map((p) => ({ personId: String(p.personId), changes: [] })) } })
+  assert.equal(await run(['--once', 'vg-check', '--after', '4'], h.deps), 0)
+  for (let k = 0; k < n; k++) assert.ok(h.calls.some((c) => c.includes(`/constituents/${500 + k}.json`)), `constituent ${500 + k}`)
 })
 
 test('a check failure prints CHECK FAILED and exits 1', async () => {
