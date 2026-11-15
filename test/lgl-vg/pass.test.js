@@ -351,6 +351,14 @@ test('a full pass records the feed end as vgCursor', async () => {
   assert.equal(g.calls.find((c) => c[0] === 'finishRun')[2].vgCursor, 7)
 })
 
+test('a feed page that says more but does not advance fails the pass', async () => {
+  const f = fakes({ pages: [{ lastAuditId: 40, more: true, persons: [] }, { lastAuditId: 40, more: true, persons: [] }, { lastAuditId: 40, more: true, persons: [] }] })
+  assert.equal(await runFullPass(f.args({ writeVg: true, vgCursorFrom: 7 })), 1)
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'getChanges').map((c) => c[1]), [7, 40])
+  assert.match(f.out.at(-1), /^PASS FAILED full the VG change feed did not advance past audit id 40 \(more: true\)/)
+  for (const n of WRITES) assert.ok(!f.names().includes(n), n)
+})
+
 test('the feed is read from the newest run row\'s cursor when the service knows none', async () => {
   const runs = [{ runId: 3, vgCursor: null }, { runId: 2, vgCursor: 31 }, { runId: 1, vgCursor: 9 }]
   const f = fakes({ runs })

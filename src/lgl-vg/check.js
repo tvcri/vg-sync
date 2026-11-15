@@ -7,11 +7,12 @@
 import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
 import { createStopper } from './abort.js'
-import { mergeLglChanges, lglCursorAfter, vgTouched, planCheck, breakerPeople, foundChange } from './check-plan.js'
+import { mergeLglChanges, lglCursorAfter, vgTouched, planCheck, foundChange } from './check-plan.js'
 
 const TWO_MINUTES = 2 * 60 * 1000
 const DAY = 24 * 60 * 60 * 1000
 const FEED_LIMIT = 1000
+const RUNS_LIMIT = 1000 // check run rows read for the breaker; reaching it trips the breaker
 const CHECK_KINDS = ['vg-check', 'lgl-check']
 
 const str = (x) => String(x)
@@ -75,7 +76,10 @@ export async function runCheck({
         const page = await fromVg(vg.getChanges(after, FEED_LIMIT))
         checkStop()
         changes.push(...(page?.persons ?? []))
-        if (page?.lastAuditId != null) after = page.lastAuditId
+        const next = page?.lastAuditId ?? null
+        // a page that says more but does not move the cursor would be asked for again and again
+        if (page?.more && !(next > after)) throw new Error(`the VG change feed did not advance past audit id ${after} (more: true)`)
+        if (next !== null) after = next
         if (!page?.more) break
       }
       vgCursor = after
@@ -157,17 +161,21 @@ export async function runCheck({
     checkStop()
     const fullStarts = fulls.filter((r) => r.result === 'ok').map((r) => Date.parse(r.startedAt)).filter(Number.isFinite)
     const since = new Date(Math.max(now() - DAY, ...fullStarts)).toISOString()
-    const runs = await fromVg(vg.recentRuns({ kinds: CHECK_KINDS, since, limit: 1000 }))
+    const runs = await fromVg(vg.recentRuns({ kinds: CHECK_KINDS, since, limit: RUNS_LIMIT }))
     checkStop()
+    // As many rows as asked for: there may be more, so the count is not complete. Fail safe: trip.
+    const counted = runs.length < RUNS_LIMIT
     const earlier = runs.filter((r) => r.result === 'ok' && CHECK_KINDS.includes(r.kind ?? kind))
       .reduce((n, r) => n + (Number(r.counts?.breakerPeople) || 0), 0)
-    const breakerTotal = earlier + breakerPeople(plan)
+    const breakerTotal = earlier + plan.counts.breakerPeople
     const limit = config.circuitBreakerPeople
-    const trips = breakerTotal > limit
+    const trips = !counted || breakerTotal > limit
     if (trips && writeVg) {
       return {
         outcome: 'failed', final: false, breaker: true, rateLimited: false, foundChange: true,
-        error: `circuit breaker: ${breakerTotal} people changed by checks in 24 hours, more than the limit of ${limit}`,
+        error: counted
+          ? `circuit breaker: ${breakerTotal} people changed by checks in 24 hours, more than the limit of ${limit}`
+          : `circuit breaker: could not count the people changed by checks in 24 hours (${RUNS_LIMIT} check runs or more); nothing was written`,
       }
     }
 
@@ -192,7 +200,7 @@ export async function runCheck({
       if (applied.stopped) throw stopError()
       await from('vg', vg.finishRun(runId, {
         result: 'ok',
-        counts: { ...plan.counts, peopleChanged: plan.counts.peopleChanged, breakerPeople: breakerPeople(plan), apply: applied.counts },
+        counts: { ...plan.counts, apply: applied.counts }, // plan.counts carries peopleChanged and breakerPeople
         lglCursor, vgCursor,
       }))
       runId = null

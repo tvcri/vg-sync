@@ -388,7 +388,9 @@ read from the `ok` check run rows, against the same limit as a full pass. **(eng
 change is a new last gift date does not count: gift dates are routine in a
 busy giving season and would trip the breaker as ordinary work. Field
 writes, links, follows, finishes and creates count. Each check run row
-stores this figure as `breakerPeople`, beside `peopleChanged`. When the
+stores this figure as `breakerPeople`, beside `peopleChanged`. A check reads
+at most 1000 check run rows for the count; if it gets that many, the count is
+not complete and the breaker trips, failing safe. When the
 breaker trips, the check writes nothing and reports `PASS FAILED`, and both
 checks stop until the next successful full pass, which clears the trip (the
 full pass has its own breaker). Separately, a VG check that finds more than
@@ -445,7 +447,10 @@ starting from the last cursor known: the service's own, else the newest run
 row with a non-null `vgCursor`, else 0. It ignores what the feed says and
 records the last `lastAuditId` as `vgCursor` in the run row, next to the LGL
 cursor (five minutes before the newest `updated_at` pulled). Anything changed
-after that point is newer than the people the pass reads.
+after that point is newer than the people the pass reads. A page that says
+`more` but whose `lastAuditId` does not pass the cursor fails the pass (or
+the VG check) with `the VG change feed did not advance past audit id <n>`,
+rather than asking for the same page until the timeout.
 
 **The service's own writes** come back as changes on the next check. They
 compare as `same` and cost one extra read.

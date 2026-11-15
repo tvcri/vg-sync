@@ -341,6 +341,37 @@ test('the breaker counts ok check runs of the last 24 hours and trips without wr
   assert.equal(b.state.vgCursor, 12)
 })
 
+test('a breaker count that reaches the read limit trips it, fail safe', async () => {
+  const c = con(101)
+  const runs = Array.from({ length: 1000 }, (_, i) => ({ runId: i + 1, kind: 'vg-check', result: 'ok', startedAt: '2026-11-15T09:00:00.000Z', counts: { breakerPeople: 0 } }))
+  const setup = () => fakes({ persons: [per(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: con(101, { first_name: 'Janet' }) }, runs })
+  const f = setup()
+  const a = f.args({ writeVg: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } })
+  const r = await runCheck(a)
+  assert.deepEqual(r, {
+    outcome: 'failed', final: false, breaker: true, rateLimited: false, foundChange: true,
+    error: 'circuit breaker: could not count the people changed by checks in 24 hours (1000 check runs or more); nothing was written',
+  })
+  for (const n of WRITES) assert.ok(!f.names().includes(n), n)
+  assert.equal(a.state.vgCursor, 5)
+
+  const d = setup()
+  assert.equal((await runCheck(d.args({ state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } }))).outcome, 'ok')
+  assert.match(d.out.at(-1), /^CHECK OK vg-check dry-run people=1 .* breaker=would-trip$/)
+})
+
+test('a feed page that says more but does not advance fails the vg check', async () => {
+  const f = fakes({ feed: [{ lastAuditId: 5, more: true, persons: [] }, { lastAuditId: 5, more: true, persons: [] }] })
+  const a = f.args()
+  const r = await runCheck(a)
+  assert.equal(r.outcome, 'failed')
+  assert.match(r.error, /^the VG change feed did not advance past audit id 5 \(more: true\)/)
+  assert.equal(f.calls.filter((x) => x[0] === 'getChanges').length, 1)
+  assert.equal(a.state.vgCursor, 5)
+  const g = fakes({ feed: [{ lastAuditId: null, more: true, persons: [] }] })
+  assert.match((await runCheck(g.args())).error, /did not advance past audit id 5/)
+})
+
 test('a successful full pass resets the check breaker window', async () => {
   const c = con(101)
   const runs = [

@@ -60,7 +60,10 @@ export async function runFullPass({
     for (;;) {
       const page = await read(vg.getChanges(vgCursor))
       checkStop()
-      if (page.lastAuditId !== null && page.lastAuditId !== undefined) vgCursor = page.lastAuditId
+      const next = page.lastAuditId ?? null
+      // a page that says more but does not move the cursor would be asked for again and again
+      if (page.more && !(next > vgCursor)) throw new Error(`the VG change feed did not advance past audit id ${vgCursor} (more: true)`)
+      if (next !== null) vgCursor = next
       if (!page.more) break
     }
     const persons = await read(vg.listPersons())

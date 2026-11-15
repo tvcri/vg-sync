@@ -153,7 +153,10 @@ Common to both:
    plan. Rows from before that pass would re-trip the next check, so the
    window starts there. If the
    total is over `CIRCUIT_BREAKER_PEOPLE`, the check writes nothing and
-   prints `PASS FAILED <kind> circuit breaker …`. Both checks then stop
+   prints `PASS FAILED <kind> circuit breaker …`. The read asks for at most
+   1000 rows; if it gets 1000, the count cannot be completed and the breaker
+   trips all the same (`circuit breaker: could not count the people changed
+   by checks in 24 hours …`), failing safe. Both checks then stop
    **until the next successful full pass**, which clears the trip. The full
    pass has its own breaker, so a runaway bug that also trips it stays
    stopped. A dry check that would trip says so, as a dry full pass does.
@@ -181,6 +184,10 @@ that found a change prints a line.
 
 - **Cursor:** the highest audit id handled (`lastAuditId` from the feed).
 - **Touched:** read the feed from the cursor (`limit` 1000; follow `more`).
+  A page that says `more` but whose `lastAuditId` does not pass the cursor
+  fails the check (`the VG change feed did not advance past audit id <n>
+  (more: true)`) instead of asking for the same page until the timeout; the
+  full pass's feed read does the same.
   Of the people it reports, keep those with a donor link. Their constituents
   are the touched ones. Changes to people with no link wait for the full
   pass. The service's own writes come back here too and compare as `same`.
@@ -359,8 +366,11 @@ The engineer chose option B on 2026-11-15:
     once a minute.
   - **The circuit breaker.** Checks stop until a full pass succeeds.
 - **`CHECK OK <kind> <mode> people=<n> writes=<n> deferred=<n> links=<n>
-  creates=<n> holdsOpened=<n> holdsClosed=<n>`**, only from a check that
-  found a change. A quiet check prints nothing, as the sync design says.
+  creates=<n> holdsOpened=<n> holdsClosed=<n>[ breaker=would-trip]`**, only
+  from a check that found a change. A quiet check prints nothing, as the
+  sync design says. The trailing ` breaker=would-trip` appears only on a dry
+  run whose plan would trip the circuit breaker (a write run fails instead),
+  as on a dry full pass's `PASS OK` line.
 - **`SYNC ALIVE`** gains `last-vg-check=<ISO time|none>`,
   `last-lgl-check=<ISO time|none>` (the last successful check of each kind)
   and `lgl-every=<5|15>m`. The silent alert matches `SYNC ALIVE` only, so it
