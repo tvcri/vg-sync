@@ -334,12 +334,29 @@ system.
 1. Ask the system what changed since its cursor: VG for audit rows after the
    VG cursor, or LGL for constituents with `updated_from` set to the LGL
    cursor.
-2. Keep the ones that belong to a linked pair; changes to anyone else wait
-   for the full pass. For each, read the other side and the pair's memory
-   rows. For a couple, read both partners. A VG audit row names the fields
-   that changed, so only those are compared.
-3. Compare, decide, apply and record exactly as a full pass does.
+2. Find the touched constituents. In the VG check, those linked to a
+   changed person; changes to a person with no link wait for the full
+   pass. In the LGL check, every constituent returned and every
+   constituent with a new or changed gift. For each touched linked
+   constituent, read the other side and the pair's memory rows. For a
+   couple, read both partners. **Every field of a touched pair is
+   compared**, not only the fields an audit row names: a pair is decided
+   as a whole, exactly as a full pass decides it.
+3. Compare, decide, apply and record exactly as a full pass does, for the
+   touched constituents only. Unlinked donors (LGL check) are matched over
+   **every** unlinked donor in the cache, as a full pass matches them,
+   because matching compares donors with each other (two donors that would
+   link to one person, a donor that looks like another); the results are
+   then cut to the touched constituents. Only holds on touched
+   constituents are reconciled, so a check never closes a hold on anyone
+   it did not look at.
 4. Advance that cursor.
+
+**A check never unlinks.** A linked constituent gone from LGL and one that
+is no longer a donor (`lgl-missing`, `no-longer-donor`) are left to the full
+pass, the only one that sees deletions. A check drops those results and
+their unlinks from its plan, and leaves any hold already open for those
+reasons as it is.
 
 Most checks find nothing new and end after one request. A check has "found
 a change" only when a comparison comes out as something other than `same`.
