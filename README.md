@@ -48,8 +48,8 @@ retries a failed pass an hour later (at most three times), and prints
 `SYNC ALIVE ...` every five minutes. Each pass prints its `PASS` line, and
 until the first successful full run with a constituent count, one line before
 it saying the constituent-drop check is skipped. A
-pass running longer than `PASS_TIMEOUT_MINUTES` (default 30) is stopped and
-fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
+pass running longer than `PASS_TIMEOUT_MINUTES` (default 30, at most 1440) is
+stopped and fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
 dry run. Decisions files go to `OUT_DIR` (default `out`); those older than
 `DECISIONS_KEEP_DAYS` (default 30) are deleted after each pass.
 

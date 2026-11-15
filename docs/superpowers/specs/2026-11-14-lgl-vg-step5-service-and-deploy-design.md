@@ -101,10 +101,23 @@ writes nothing, including run rows.
 
 A failure in step 2 or 3 is tried three times in all, 20 seconds apart,
 before `STARTUP FAILED`. **(call)** A refused sign-in (a wrong client
-secret: 401 or `invalid_client`) is tried once: retrying would only delay
-the same `STARTUP FAILED` by 40 seconds. (Ruled in the build, 2026-11-15.) That fits inside the deployer's
-90-second health gate, so a brief VG or Keycloak hiccup during a deploy
-delays the markers rather than rolling back a good image. The markers
+secret: 401 or `invalid_client`; a VG 403; an LGL 401 or 403, a bad API
+key) is tried once: retrying would only delay the same `STARTUP FAILED` by
+40 seconds. (Ruled in the build, 2026-11-15.) Each try is a single attempt
+with a 15-second timeout: the VG check's timeout covers the whole call,
+token included, and the LGL probe skips the client's own backoff. So these
+tries are the only retries, and a check that fails every time prints
+`STARTUP FAILED` within 85 seconds (3 × 15 + 2 × 20), inside the deployer's
+90-second health gate; a brief VG or Keycloak hiccup during a deploy
+delays the markers rather than rolling back a good image. (A hiccup in
+both checks in one start-up can outlast the gate; the gate then rolls
+back, which is the safe side.) Passes keep their own timeouts and retries.
+
+The `SIGTERM` and `SIGINT` handlers are registered before step 1. A signal
+during start-up prints `STOPPING` and `STOPPED` and the process exits 0 at
+once: nothing has been written. The compose entry sets `init: true`, so
+node does not run as PID 1 in the container and the signal reaches it as
+it would any other process. The markers
 arrive in seconds on a normal start, long before the first full pass
 (about two minutes) ends.
 
@@ -122,11 +135,12 @@ arrive in seconds on a normal start, long before the first full pass
   so the failure alert fires; a retry that succeeds lets it resolve.
   Failures that would only repeat are **not** retried: the circuit
   breaker, the constituent-drop check, and a refused sign-in
-  (`invalid_client`, 401, 403). They wait for the engineer or the next
-  night. **(call)**
+  (`invalid_client`, 401, 403, from Keycloak, VG or LGL). They wait for
+  the engineer or the next night. **(call)**
 - **A hung pass.** Every VG and LGL request has a timeout (60 seconds for
   VG, 120 for an LGL page) and counts as a network failure when it runs
-  out. A pass also has a ceiling, `PASS_TIMEOUT_MINUTES` (default 30): when
+  out. A pass also has a ceiling, `PASS_TIMEOUT_MINUTES` (default 30, at
+  most 1440, since a longer timer would fire at once in Node): when
   it is reached the pass is asked to stop as on shutdown and reports
   `PASS FAILED full timed out`, so the failure alert fires. The heartbeat
   keeps printing throughout; the failure alert, not the silent one, is
@@ -194,11 +208,15 @@ scheduler and the heartbeat, and asks any running pass to stop.
   the error `stopped by shutdown`, writes its decisions file, and prints
   `PASS STOPPED`, not `PASS FAILED`.
 - The compose service gets `stop_grace_period: 30s`. A single VG write and
-  its memory update take well under that.
+  its memory update take well under that. A write hung longer than the
+  grace period is killed with the process, leaving its run row `running`;
+  the run guard then refuses write passes for up to
+  `PASS_TIMEOUT_MINUTES`, and the hourly retry recovers.
 - The process exits as soon as it has printed `STOPPED`, so an abandoned
   read cannot hold it past the grace period. Everything is recorded before
-  `STOPPED`. A `SIGTERM` during the start-up retries ends the process at
-  once: nothing has been written yet.
+  `STOPPED`. A `SIGTERM` during start-up (its checks or their retries)
+  ends the process at once, after `STOPPING` and `STOPPED`: nothing has
+  been written yet.
 
 ### Client fixes owed since step 1
 
@@ -218,7 +236,7 @@ scheduler and the heartbeat, and asks any running pass to stop.
 | `FULL_PASS_UTC` | `07:00` | Nightly full pass, UTC, `HH:MM` |
 | `OUT_DIR` | `out` | Where decisions files go |
 | `DECISIONS_KEEP_DAYS` | `30` | Older decisions files are deleted |
-| `PASS_TIMEOUT_MINUTES` | `30` | A pass running longer is stopped and fails |
+| `PASS_TIMEOUT_MINUTES` | `30` | A pass running longer is stopped and fails; at most 1440 |
 | `IMAGE_REVISION` | from the image | Commit the image was built from; recorded in run rows |
 
 ## The image and CI (this repo)
@@ -384,7 +402,8 @@ monitoring and is run only with the engineer's go-ahead.
 
 ## Order of work and the push to GitHub
 
-`origin/main` holds only the founding brief; steps 1 to 4 are local. The
+When this was written, `origin/main` held only the founding brief and
+steps 1 to 4 were local; `main` was pushed on 2026-11-15 (as `b162219`). The
 deployer rehearsal needs CI-built images, and CI builds only on a push to
 `main`. **Agreed with the engineer (2026-11-14):** `main` is pushed in the
 middle of step 5. So the order is: the service, the image and the publish

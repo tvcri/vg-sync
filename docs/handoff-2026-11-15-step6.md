@@ -37,15 +37,19 @@
   `FULL_PASS_UTC`; a failed pass retried an hour later, at most three times
   a night; nothing after a stop. Clock and timers are injected.
 - `src/lgl-vg/service.js`: start-up (sign in, reach LGL, the three
-  `STARTUP` markers, retries), `SYNC ALIVE` every five minutes, and the
-  stop on `SIGTERM` or `SIGINT` (`STOPPING`, `STOPPED`, exit).
-- `src/lgl-vg/pass.js`: the pass ceiling (`PASS_TIMEOUT_MINUTES`); reads
-  raced against a stop; the run guard (one write run at a time, across
-  processes); pruning of old decisions files.
+  `STARTUP` markers, retries), `SYNC ALIVE` every five minutes, the pass
+  ceiling (`PASS_TIMEOUT_MINUTES`), pruning of old decisions files
+  (`pruneDecisions`), and the stop on `SIGTERM` or `SIGINT` (`STOPPING`,
+  `STOPPED`, exit).
+- `src/lgl-vg/pass.js`: reads raced against a stop; the run guard (one
+  write run at a time, across processes).
 - `src/lgl-vg/apply.js`: stops between writes; on a stop it saves memory
   and opens holds, but closes none.
 - Client fixes: the VG token response is checked; the LGL client retries a
-  network failure with the same 450-second backoff.
+  network failure with the same 450-second backoff. A VG 403 and an LGL
+  401 or 403 are final (not retried hourly). The start-up checks are one
+  attempt each with a 15-second timeout, so start-up ends within the
+  deployer's 90-second gate; a signal during start-up stops at once.
 - **Commands.** `node src/lgl-vg/main.js` with no command is the service.
   `--once full` replaced `full` (`npm run full` and the harness use it).
   `--once vg-check` and `--once lgl-check` are refused until step 6.
@@ -77,7 +81,10 @@ All of these wait for the one go-live after step 7, except merging
    `~/tvcri/logship/`, as the deployer's README and the log shipper's
    docstring say).
    Both can go in before go-live: without a `sync` line or container, each
-   skips it silently.
+   skips it silently. Right after installing the deployer, before cron's
+   next run, run `python3 sidecar-deploy.py --service email --dry-run`: the
+   email path of the generalized deployer was checked only by reading and
+   unit tests.
 4. On the VM, create `vg-sync/out` owned by uid 1000 (`install -d -o 1000
    -g 1000 vg-sync/out`) and `vg-sync/.env`, readable by uid 1000.
 5. Add `sync` to the VM's compose file, pinned by digest, as in
