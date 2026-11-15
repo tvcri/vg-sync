@@ -346,8 +346,11 @@ The engineer chose option B on 2026-11-15:
   repeats every 60 minutes while the failures go on. **(call)** One
   `PASS FAILED` sets off the alert once. Repeating it each hour keeps the
   alert from resolving while the problem persists, without sending a page
-  every check.
-- **`CHECK RECOVERED <kind>`** on the first success after a `PASS FAILED`.
+  every check. A halt (below) ends a run of failures: the full pass that
+  clears it starts both kinds' clocks afresh, so the first failure after it
+  is a `CHECK FAILED`, not a `PASS FAILED` dated before the halt.
+- **`CHECK RECOVERED <kind>`** on the first success after a `PASS FAILED`
+  (including one that halted the checks).
 - **At once, as `PASS FAILED`:**
   - **A final error** (a refused credential: a Keycloak 401,
     `invalid_client` or `unauthorized_client`, or an LGL 401). Both checks

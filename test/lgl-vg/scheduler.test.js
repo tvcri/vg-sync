@@ -456,6 +456,28 @@ test('a final error halts checks until a full pass succeeds', async () => {
   await s.stop()
 })
 
+test('a full pass that clears a halt starts the failure clock afresh', async () => {
+  // The vg check fails from 06:41:30, then a final error at 06:44:30 halts it. The nightly pass at
+  // 07:00 clears the halt; the next check fails once more and is not taken for a run since 06:41:30.
+  const fails = new Set([at('06:41:30'), at('06:42:30'), at('06:43:30'), at('07:00:30')])
+  const { clock, lines, s } = checkSetup(at('06:40:30'), {
+    check: async (kind, opts, c) => {
+      if (kind !== 'vg-check') return checkOk
+      if (iso(c.now()) === at('06:44:30')) return checkResult({ outcome: 'failed', final: true, error: 'LGL 401' })
+      return fails.has(iso(c.now())) ? checkResult({ outcome: 'failed', error: 'VG down' }) : checkOk
+    },
+  })
+  s.start()
+  await clock.advance(21 * MIN + 30_000)
+  assert.deepEqual(lines.filter((l) => !l.startsWith('SYNC ALIVE')), [
+    'CHECK FAILED vg-check VG down', 'CHECK FAILED vg-check VG down', 'CHECK FAILED vg-check VG down',
+    'PASS FAILED vg-check LGL 401',
+    'CHECK FAILED vg-check VG down',
+    'CHECK RECOVERED vg-check', // the halt's PASS FAILED still gets its recovery line
+  ])
+  await s.stop()
+})
+
 test('the breaker halts checks until a full pass succeeds', async () => {
   // Tripped at 06:56:30. The nightly pass fails; its retry at 08:00 succeeds.
   const passes = [ok, failedRetryable]

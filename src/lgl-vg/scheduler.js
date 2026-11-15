@@ -116,7 +116,15 @@ export function createScheduler({
       lastResult = 'ok'
       retries = 0
       checksOn = true
-      halted = null
+      if (halted) {
+        // A halt ends a run of failures: the failure clock starts afresh. `alerted` stays, so the
+        // next ok check still prints CHECK RECOVERED for the halt's PASS FAILED.
+        for (const st of Object.values(checkState)) {
+          st.failingSince = null
+          st.lastAlertAt = null
+        }
+        halted = null
+      }
       armTick()
       return
     }
