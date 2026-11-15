@@ -15,7 +15,7 @@ import { parsePolicy } from './policy.js'
 import { runFullPass } from './pass.js'
 import { importSeed } from './seed.js'
 import { startService } from './service.js'
-import { runCheck, lglCheckFrom } from './check.js'
+import { runCheck, lglCheckWindow } from './check.js'
 import { mergeLglChanges } from './check-plan.js'
 
 const USAGE = `Usage:
@@ -177,13 +177,18 @@ async function check(kind, argv, { env, fetchImpl = fetch, sleep, now, stdout, w
       extra = { maxLglReads: Infinity, fetchGifts: (id) => lgl.constituentGifts(id) }
     } else {
       state.lglCursor = cursor
-      // With no cache the check could not tell a new gift from a known one: pull it first, as a full pass does.
-      // A constituent is touched only when the cache lacks it or holds another updated_at, and this pull
-      // has read every edit already. So the constituents the check's own search will return (those
-      // updated since it asks from) are left out of the cache, as a cache from an earlier pass would lack them.
-      const from = Date.parse(lglCheckFrom(cursor))
-      const constituents = (await lgl.pullConstituents()).filter((c) => !(Date.parse(c.updated_at) >= from))
-      const gifts = await lgl.pullGifts()
+      // With no cache the check could not tell a new gift from a known one: pull it first, as a full pass
+      // does. But this pull has read every edit and every new gift already, so it is cut back to the cache
+      // the service would have held at the cursor: the constituents and gifts the check's own searches
+      // return (updated since each search starts) are left out, and so count as new. A gift with no
+      // updated_at is left out when its constituent is.
+      const { fromIso, fromDate } = lglCheckWindow(cursor)
+      const inWindow = (updatedAt, from) => Date.parse(updatedAt) >= Date.parse(from)
+      const pulled = await lgl.pullConstituents()
+      const recent = new Set(pulled.filter((c) => inWindow(c.updated_at, fromIso)).map((c) => String(c.id)))
+      const constituents = pulled.filter((c) => !recent.has(String(c.id)))
+      const gifts = (await lgl.pullGifts()).filter((g) => (Number.isFinite(Date.parse(g.updated_at))
+        ? !inWindow(g.updated_at, fromDate) : !recent.has(String(g.constituent_id))))
       state.cache = mergeLglChanges(null, { constituents, gifts }).cache
       extra = {}
     }

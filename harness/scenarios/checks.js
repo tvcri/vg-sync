@@ -3,13 +3,14 @@
 // runs alone (the last two as one group of two pairs). Invented people in a town that does not exist.
 //
 // An LGL check by hand has no cache from that pass: it pulls LGL just before its search, so its pull
-// already holds every edit and every new gift. It leaves the constituents in its window (two minutes
-// before the cursor, which the full pass set five minutes before the newest updated_at) out of that
-// cache, so they are touched; the gifts stay in it, so a new gift touches nothing by itself. The pairs
+// already holds every edit and every new gift. It cuts that pull back to the cache the service would
+// have held at the cursor, leaving out the constituents and gifts in its window (constituents updated
+// since two minutes before the cursor, which the full pass set five minutes before the newest
+// updated_at; gifts updated since the day before the cursor's date), so those count as new. The pairs
 // here are seeded minutes before their full pass, so every one of them is in the window and is touched
-// through the constituent read. These scenarios show what a touched pair's check decides; the gift
-// read on its own, and narrowing to the touched constituents, rest on the unit tests
-// (test/lgl-vg/check-plan.test.js, check.test.js).
+// through the constituent read, and a new gift through the gift read as well. These scenarios show what
+// a touched pair's check decides; the gift read on its own, and narrowing to the touched constituents,
+// rest on the unit tests (test/lgl-vg/check-plan.test.js, check.test.js, main.test.js).
 import { GIFT, agreeing } from '../people.js'
 
 const town = { city: 'Zzyzxford', state: 'RI', zip: '00901' }
@@ -37,7 +38,7 @@ export default [
   },
   {
     name: 'new-gift-moves-last-gift-date-by-lgl-check',
-    why: 'Step 6, the LGL check: a new gift on a linked donor moves VG\'s last gift date on the next LGL check. By hand the check\'s own pull already holds the gift, so the donor is touched through the constituent read (seeded inside the check\'s window), not the gift read; the check then recomputes the last gift date from every gift.',
+    why: 'Step 6, the LGL check: a new gift on a linked donor moves VG\'s last gift date on the next LGL check. The new gift is new to the check (by hand, the gifts in its window are left out of its pulled cache), and the donor is also touched through the constituent read (seeded inside the check\'s window); the check then recomputes the last gift date from every gift.',
     since: 6,
     runAlone: true,
     ...agreeing(giving),
@@ -49,7 +50,7 @@ export default [
   },
   {
     name: 'first-gift-links-matching-person-by-lgl-check',
-    why: 'Step 6, the LGL check: a constituent with no gift is no donor, so the full pass links nothing. After a first gift, the LGL check matches the VG person with the same name and email and links them (Unlinked donors, Link). By hand the check\'s own pull already holds the gift, so the constituent is touched through its constituent read (seeded inside the check\'s window), not the gift read.',
+    why: 'Step 6, the LGL check: a constituent with no gift is no donor, so the full pass links nothing. After a first gift, the LGL check matches the VG person with the same name and email and links them (Unlinked donors, Link). The first gift is new to the check (by hand, the gifts in its window are left out of its pulled cache), and the constituent is also touched through its constituent read (seeded inside the check\'s window).',
     since: 6,
     runAlone: true,
     link: false,

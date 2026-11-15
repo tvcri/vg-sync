@@ -33,7 +33,7 @@ const persons = [
   },
 ]
 
-function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [], lglPull = constituents, memory = [], acceptWrites = false } = {}) {
+function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [], lglPull = constituents, lglGiftsUpdated = [], lglGiftsPull = gifts, memory = [], acceptWrites = false } = {}) {
   const requests = []
   const calls = []
   const out = []
@@ -68,10 +68,10 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
       if (/\/constituents\/\d+\.json$/.test(u.pathname)) return json(constituents[0])
       if (/\/constituents\/\d+\/gifts\.json$/.test(u.pathname)) return json({ total_items: gifts.length, items: gifts })
       if (u.searchParams.get('q[]')?.startsWith('updated_from=')) {
-        const upd = u.pathname.endsWith('/constituents/search') ? lglUpdated : []
+        const upd = u.pathname.endsWith('/constituents/search') ? lglUpdated : lglGiftsUpdated
         return json({ total_items: upd.length, items: upd })
       }
-      const items = u.pathname.endsWith('/constituents/search') ? lglPull : gifts
+      const items = u.pathname.endsWith('/constituents/search') ? lglPull : lglGiftsPull
       return json({ total_items: items.length, items })
     }
     return json({}, 404)
@@ -542,6 +542,18 @@ test('lgl-check by hand touches a constituent its own pull already holds, when i
   const h = checkHarness({ ...plannedWrite(), lglPull: [edited, older], lglUpdated: [edited] })
   assert.equal(await run(['--once', 'lgl-check', '--since', '2026-11-11T09:00:00Z'], h.deps), 0)
   assert.match(h.out.at(-1), /^CHECK OK lgl-check dry-run people=1 writes=1 /)
+})
+
+test('lgl-check by hand counts a gift in its window as new, though its own pull holds it', async () => {
+  // The constituent is outside the window (a gift does not move its updated_at); the gift search
+  // starts the day before the cursor's date, and the gift was updated after that.
+  const c = { ...constituents[0], updated_at: '2026-11-01T08:00:00Z' }
+  const old = { ...gifts[0], updated_at: '2025-06-02T12:00:00Z' }
+  const fresh = { id: 2, constituent_id: 1, received_date: '2026-11-10', gift_type_id: 1, fund_id: 9, payment_type_id: 1, updated_at: '2026-11-11T09:30:00Z' }
+  const h = checkHarness({ lglPull: [c], lglGiftsPull: [old, fresh], lglGiftsUpdated: [fresh] })
+  assert.equal(await run(['--once', 'lgl-check', '--since', '2026-11-11T09:00:00Z'], h.deps), 0)
+  assert.ok(h.calls.some((c) => c.includes('/gifts/search') && decodeURIComponent(c).includes('updated_from=2026-11-10')))
+  assert.match(h.out.at(-1), /^CHECK OK lgl-check dry-run people=1 /)
 })
 
 test('a check by hand that finds nothing says so', async () => {

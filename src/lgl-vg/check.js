@@ -17,9 +17,15 @@ const CHECK_KINDS = ['vg-check', 'lgl-check']
 
 const str = (x) => String(x)
 
-// Where an LGL check asks from: two minutes before the cursor, so a record edited while the last
-// read was under way is read again.
-export const lglCheckFrom = (cursor) => new Date(Date.parse(cursor) - TWO_MINUTES).toISOString()
+// Where an LGL check asks from. Constituents: two minutes before the cursor, so a record edited
+// while the last read was under way is read again. Gifts (the search takes a date only): the day
+// before the cursor's date, since it is not known whether LGL reads a bare date as UTC.
+export function lglCheckWindow(cursor) {
+  return {
+    fromIso: new Date(Date.parse(cursor) - TWO_MINUTES).toISOString(),
+    fromDate: new Date(Date.parse(cursor.slice(0, 10)) - DAY).toISOString().slice(0, 10),
+  }
+}
 const isTokenError = (err) => /^Keycloak token|openid-connect\/token/.test(String(err?.message))
 const is4xx = (err) => Number.isInteger(err?.status) && err.status >= 400 && err.status < 500
 
@@ -115,8 +121,7 @@ export async function runCheck({
       }
     } else {
       if (!state.lglCursor) throw new Error('no LGL cursor: a full pass has not succeeded yet')
-      const fromIso = lglCheckFrom(state.lglCursor)
-      const fromDate = new Date(Date.parse(state.lglCursor.slice(0, 10)) - DAY).toISOString().slice(0, 10)
+      const { fromIso, fromDate } = lglCheckWindow(state.lglCursor)
       const constituents = await fromLgl(lgl.constituentsSince(fromIso, { attempts: lglAttempts }))
       checkStop()
       const gifts = await fromLgl(lgl.giftsSince(fromDate, { attempts: lglAttempts }))

@@ -476,9 +476,10 @@ the `full` command in step 5.
 `vg-check` starts with an empty cache and reads every touched constituent
 and its gifts; `lgl-check` first pulls every constituent and gift, so it
 cannot take a known gift for a new one. That pull has read every edit
-already, so the constituents updated since the check asks from (two minutes
-before the cursor) are left out of its cache: they are touched, as they would
-be against a cache from an earlier pass. Both keep the full pass's LGL retries
+already, so it is cut back to the cache the service would have held at the
+cursor: the constituents updated since the check's constituent search starts
+(two minutes before the cursor) and the gifts updated since its gift search
+starts (the day before the cursor's date) are left out, and count as new. Both keep the full pass's LGL retries
 (the run is attended), print the counts and the `CHECK OK` line, and on
 failure print `CHECK FAILED <kind> <message>` and exit 1 at once.
 

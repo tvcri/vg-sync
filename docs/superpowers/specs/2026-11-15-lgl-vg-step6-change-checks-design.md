@@ -410,7 +410,14 @@ thousands of small files a week.
   first pulls every constituent and gift to build the cache, about 95
   seconds against production and about a second on the trial account, then
   runs one check. **(call)** With no cache it cannot tell a new gift from a
-  known one, and one code path is safer than two.
+  known one, and one code path is safer than two. The pull is made after
+  any edit, so it is cut back to the cache the service would have held at
+  the cursor: the constituents updated since the check's constituent search
+  starts (two minutes before the cursor) and the gifts updated since its
+  gift search starts (the day before the cursor's date) are left out, and
+  so count as new. Both bounds come from the one helper the check uses
+  (`lglCheckWindow`). LGL gifts carry `updated_at`; a gift without one is
+  left out when its constituent is.
 - By hand, LGL requests keep the full pass's retries, since the run is
   attended. `--snapshot` and `--max-people` are not accepted. The check
   breaker uses `CIRCUIT_BREAKER_PEOPLE`.
@@ -516,11 +523,12 @@ deferred decision on that pair every LGL check found a change, wrote a run
 row, and kept the idle backoff from starting. A returned constituent now
 counts as touched only when the cache lacks it or holds another
 `updated_at`. A check by hand, whose cache is a pull made just before, leaves
-the constituents in the check's window out of that cache, so it still
-touches them. The harness's LGL checks run by hand, so they still touch
-every pair seeded in the minutes before their full pass, as at the
-rehearsal: the scenarios show what a touched pair's check decides, and
-narrowing and the gift read alone rest on the unit tests.
+the constituents and gifts in the check's window out of that cache (see
+Commands), so it still touches them, and a new gift counts as new. The
+harness's LGL checks run by hand, so they still touch every pair seeded in
+the minutes before their full pass, as at the rehearsal: the scenarios show
+what a touched pair's check decides. A new gift there is touched through both
+reads, so the gift read alone, and narrowing, rest on the unit tests.
 
 ## Left to the builder
 
