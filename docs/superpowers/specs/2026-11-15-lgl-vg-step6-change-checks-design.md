@@ -530,6 +530,13 @@ the minutes before their full pass, as at the rehearsal: the scenarios show
 what a touched pair's check decides. A new gift there is touched through both
 reads, so the gift read alone, and narrowing, rest on the unit tests.
 
+After the fixes: unit tests 581; the harness 42 of 44 at first. The two that
+failed were the hold pair, whose full pass stopped on `Incomplete read of
+/gifts/search: got 7 of 6` (the trial account's gift count moved during the
+read; nothing to do with the checks), so their check had no cursor. Run again
+alone, all six check scenarios passed. The container rehearsal and the
+production dry runs above were before these fixes.
+
 ## Left to the builder
 
 - How the caches and cursors pass between `pass.js`, the checks and the

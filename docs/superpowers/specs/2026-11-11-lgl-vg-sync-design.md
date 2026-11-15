@@ -418,7 +418,11 @@ check off to the first tick after LGL's five-minute pause.
 taken from LGL's own clock. Each LGL check asks from two minutes before the
 cursor, and a full pass sets it to five minutes before the newest
 `updated_at` in its pull, so a record edited while a read was under way is
-read again and never missed. The VG cursor is the highest audit id handled.
+read again. A record read again counts as touched only when its
+`updated_at` differs from the cached copy's, so the overlap costs no
+repeated decisions. One narrow case waits for the nightly full pass: two
+edits within the same second (LGL's `updated_at` is precise to the second)
+on either side of a check's read. The VG cursor is the highest audit id handled.
 The feed scans audit rows past the cursor in id order and stops at the first
 missing id, since a gap is a write not yet committed. Only when the row after
 the gap is older than `VG_SYNC_CHANGE_GAP_SECONDS` (60) does it take the gap
@@ -1110,7 +1114,14 @@ unattended in production.
    secret), and left a compose file without `sync` alone. The step 5
    design, "What the rehearsal showed", has the details.
 6. **Change checks.** The one-minute VG check, the five-minute LGL check
-   including gifts, and their cursors.
+   including gifts, and their cursors. **Done 2026-11-15:** one tick timer
+   (the LGL check every fifth tick, every fifteenth when idle), the LGL
+   cache, the check breaker, the 15-minute failure rule, `--once vg-check`
+   and `--once lgl-check`. The full harness set passes (44, six of them
+   step 6 scenarios). The image, run locally, carried an LGL edit to VG by
+   the LGL check and deferred a VG edit in the VG check. Dry runs of the
+   full pass and both checks against production LGL exited clean. The step
+   6 design, "What the rehearsal showed", has the details.
 7. **VG to LGL.** Writes to LGL, using the calls verified on 2026-11-11.
    Then the one go-live: the service is deployed to production and LGL
    writes are switched on in the stages above. Before its first production

@@ -8,8 +8,9 @@ A headless service that keeps three systems in step for Village Green (VG):
 
 It runs unattended on a schedule. No staff interaction, no UI.
 
-**Status (2026-11-15): LGL ↔ VG steps 1 to 5 are built, with a test
-harness; step 6 is next.** Start with `docs/handoff-2026-11-15-step6.md`. The
+**Status (2026-11-15): LGL ↔ VG steps 1 to 6 are built, with a test
+harness; step 7 (VG to LGL, then go-live) is next.** Start with
+`docs/handoff-2026-11-15-step7.md`. The
 design is `docs/superpowers/specs/2026-11-11-lgl-vg-sync-design.md` (its
 "Build order" lists the seven steps; there is one go-live, after step 7). The
 harness design is `docs/superpowers/specs/2026-11-13-test-harness-design.md`.
