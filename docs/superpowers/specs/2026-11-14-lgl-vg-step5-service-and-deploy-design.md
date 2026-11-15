@@ -94,24 +94,36 @@ writes nothing, including run rows.
 2. Sign in to VG and call `GET /user`. Print `STARTUP VG signed in as
    <username>`.
 3. One cheap LGL request (the first page of constituents, `limit=1`).
-   Print `STARTUP LGL reached`.
+   Print `STARTUP LGL reached`. A 429 (LGL's five-minute rate-limit pause)
+   counts as reached, since LGL answered and did not refuse the key: it
+   prints `STARTUP LGL reached (rate-limited)`, and the deployer matches
+   the prefix. The pass that follows honors `Retry-After` as usual.
 4. Start the scheduler. Print `STARTUP scheduler started write-vg=<on|off>
    nightly=<HH:MM>Z`.
 5. The first job is a full pass, at once.
 
 A failure in step 2 or 3 is tried three times in all, 20 seconds apart,
-before `STARTUP FAILED`. **(call)** A refused sign-in (a wrong client
-secret: 401 or `invalid_client`; a VG 403; an LGL 401 or 403, a bad API
-key) is tried once: retrying would only delay the same `STARTUP FAILED` by
-40 seconds. (Ruled in the build, 2026-11-15.) Each try is a single attempt
-with a 15-second timeout: the VG check's timeout covers the whole call,
-token included, and the LGL probe skips the client's own backoff. So these
-tries are the only retries, and a check that fails every time prints
-`STARTUP FAILED` within 85 seconds (3 × 15 + 2 × 20), inside the deployer's
-90-second health gate; a brief VG or Keycloak hiccup during a deploy
-delays the markers rather than rolling back a good image. (A hiccup in
-both checks in one start-up can outlast the gate; the gate then rolls
-back, which is the safe side.) Passes keep their own timeouts and retries.
+before `STARTUP FAILED`. **(call)** A refused sign-in is tried once:
+retrying would only delay the same `STARTUP FAILED` by 40 seconds. At
+start-up that is a Keycloak 401, `invalid_client` or `unauthorized_client`
+(a wrong client secret); a VG 403 from `GET /user` (no role grant, no
+privacy acknowledgement or a missing scope; the message says which to
+check); and an LGL 401 (a bad API key). (Ruled in the build, 2026-11-15;
+revised in review: an LGL 403 and a VG 403 elsewhere are not final, and
+are retried like any other failure.) Each try is a single attempt: the VG
+check's timeout covers the whole call, token included, and the LGL probe
+skips the client's own backoff, so these tries are the only retries.
+
+Both checks share **one start-up budget of 80 seconds**, so start-up ends
+inside the deployer's 90-second health gate whichever check fails. A try's
+timeout is 15 seconds or the time left in the budget, whichever is less;
+no try or 20-second wait starts that could not finish inside the budget.
+When the budget runs out the process prints `STARTUP FAILED` naming the
+check and its last error (`LGL not reached: start-up time ran out (80 s);
+last error: ...`). A brief VG or Keycloak hiccup during a deploy delays
+the markers rather than rolling back a good image; a hiccup long enough to
+use up the budget fails start-up, and the gate rolls back, which is the
+safe side. Passes keep their own timeouts and retries.
 
 The `SIGTERM` and `SIGINT` handlers are registered before step 1. A signal
 during start-up prints `STOPPING` and `STOPPED` and the process exits 0 at
@@ -134,9 +146,10 @@ arrive in seconds on a normal start, long before the first full pass
   more is scheduled; the next start runs a pass at once. Every failure prints `PASS FAILED`,
   so the failure alert fires; a retry that succeeds lets it resolve.
   Failures that would only repeat are **not** retried: the circuit
-  breaker, the constituent-drop check, and a refused sign-in
-  (`invalid_client`, 401, 403, from Keycloak, VG or LGL). They wait for
-  the engineer or the next night. **(call)**
+  breaker, the constituent-drop check, and a refused sign-in (a Keycloak
+  401, `invalid_client` or `unauthorized_client`, or an LGL 401). They wait
+  for the engineer or the next night. **(call)** A VG or LGL 403 during a
+  pass is retried like any other failure.
 - **A hung pass.** Every VG and LGL request has a timeout (60 seconds for
   VG, 120 for an LGL page) and counts as a network failure when it runs
   out. A pass also has a ceiling, `PASS_TIMEOUT_MINUTES` (default 30, at
@@ -290,9 +303,9 @@ required.
   matches `FAILED` anywhere in the line, so it covers both services
   unchanged.
 - `README.md` is updated to match.
-- **Where it is (2026-11-15):** this work and the log shipping below are on
-  branch `sync-deploy` of `vg-utils` (worktree `~/dev/tvcri/vg-utils-sync-deploy`),
-  not yet merged into its `main`. The engineer merges it.
+- **Where it is (2026-11-15):** this work and the log shipping below were
+  built on branch `sync-deploy` of `vg-utils` and merged into its `main` as
+  `3e9fc82`; the branch and its worktree are gone.
 
 ## Log shipping (`vg-utils/vm-logship`)
 
@@ -304,24 +317,28 @@ required.
   `BASE` overridden to a scratch directory, to check that the sync
   container's lines are read and archived as expected. `--no-ship`
   advances the real cursors, so it is used only with a scratch base.
-- On branch `sync-deploy` of `vg-utils`, with the deployer.
+- In `vg-utils` `main` (merged as `3e9fc82`), with the deployer.
 
 ## The alerts
 
 Two scheduled-query alerts in resource group `village-green_group`, action
 group `vg-alerts`, on the same workspace as the existing four. Created
-**disabled** in step 5; enabled at go-live (step 7).
+**disabled** on 2026-11-15; enabled at go-live (step 7) with
+`alerts-sync.sh enable`.
 
 | Alert | Query | Every | Window | Fires when |
 |---|---|---|---|---|
 | `vg-sync-pass-failed` | `VmContainerLogs_CL \| where Container == 'tvcri-sync-1' \| where Message has_cs 'PASS FAILED' or Message has_cs 'STARTUP FAILED'` | 5 min | 15 min | count > 0 |
-| `vg-sync-silent` | `VmContainerLogs_CL \| where Container == 'tvcri-sync-1' \| where Message has_cs 'SYNC ALIVE'` | 5 min | 20 min | count < 1 |
+| `vg-sync-silent` | `VmContainerLogs_CL \| where Container == 'tvcri-sync-1' \| where Message has_cs 'SYNC ALIVE'` | 5 min | 15 min | count < 1 |
 
 The silent alert follows `vg-email-sidecar-silent` (read 2026-11-14: any
 line from `tvcri-email-1`, every 15 minutes over 15, fires below 1), with
 two differences: it counts only `SYNC ALIVE`, so a chatty but stuck process
-still alarms; and its window is the sync design's 20 minutes, checked every
-5. The failed alert follows `vg-sidecar-deploy-failed`.
+still alarms; and it is checked every 5 minutes. Its window is 15 minutes,
+the same as `vg-email-sidecar-silent`: the sync design asked for 20, but
+Azure rejects a 20-minute window. With the heartbeat every 5 minutes, three
+`SYNC ALIVE` lines are expected in each window, so a single late line does
+not fire it. The failed alert follows `vg-sidecar-deploy-failed`.
 
 The `az` commands that create them are kept in `vg-utils` beside the
 deployer (`vm-sidecar-deploy/alerts-sync.sh`), with the enable command for
@@ -355,7 +372,7 @@ monitoring and is run only with the engineer's go-ahead.
    query`, with the table replaced by a `datatable` of sample lines (a
    `PASS FAILED`, a `SYNC ALIVE`, an unrelated line), to show it matches
    what it should. Then the alerts are created disabled, on the engineer's
-   go-ahead.
+   go-ahead (done 2026-11-15).
 
 ### What the rehearsal showed (2026-11-14 and 15)
 
@@ -373,7 +390,8 @@ monitoring and is run only with the engineer's go-ahead.
    run inside the container refused ("another sync run ... still running;
    nothing was written") and exited 1, a dry run was not refused, and the
    row was deleted afterward.
-4. **The deployer,** from branch `sync-deploy` against a scratch compose
+4. **The deployer,** from branch `sync-deploy` (since merged into
+   `vg-utils` `main` as `3e9fc82`) against a scratch compose
    file pinning `sync` to the first CI image (digest A), with `:latest` the
    second (digest B):
    - a dry run said it would deploy A to B; a real run printed `DEPLOYED
@@ -395,10 +413,11 @@ monitoring and is run only with the engineer's go-ahead.
    cursor; a second run added none.
 6. **The alerts:** both queries, run against sample lines, matched what
    they should (`PASS FAILED` and `STARTUP FAILED` but not lowercase or
-   `PASS OK`; no `SYNC ALIVE` gives no rows). `alerts-sync.sh show` found
-   neither alert. **They are not created yet:** `create` awaits the
-   engineer's go-ahead. Its exact `az` syntax was checked against `--help`
-   only, so the first real run may need a small fix.
+   `PASS OK`; no `SYNC ALIVE` gives no rows). Both alerts were then
+   created **disabled** on 2026-11-15, with the engineer's go-ahead. Azure
+   rejected a 20-minute window, so `vg-sync-silent` uses 15 minutes,
+   checked every 5 (as `vg-email-sidecar-silent`). They are enabled at
+   go-live with `alerts-sync.sh enable`.
 
 ## Order of work and the push to GitHub
 
@@ -418,8 +437,9 @@ never pushed.
 
 - ~~Add `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` to `tvcri/vg-sync`.~~
   Done 2026-11-15.
-- Go-ahead to create the two alerts, disabled. Still open.
-- Merge `vg-utils` branch `sync-deploy` into its `main`.
+- ~~Go-ahead to create the two alerts, disabled.~~ Created 2026-11-15.
+- ~~Merge `vg-utils` branch `sync-deploy` into its `main`.~~ Merged as
+  `3e9fc82` (2026-11-15); the branch and worktree are removed.
 
 ## Left to the builder
 

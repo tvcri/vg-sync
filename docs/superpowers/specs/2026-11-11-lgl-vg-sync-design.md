@@ -979,7 +979,8 @@ The same guide settles three facts:
   interface.
 - **Alerts.** Two Azure alerts through the existing action group, the same
   way the email sidecar's work. One fires on `PASS FAILED`. One fires when
-  no `SYNC ALIVE` has arrived in 20 minutes; it covers a stopped or
+  no `SYNC ALIVE` has arrived in 15 minutes (20 was asked for, but Azure
+  rejects a 20-minute window; see the step 5 design); it covers a stopped or
   restarting container, a hung process, and a break in log shipping itself.
   Open holds do not raise an alert. New holds are counted in the `PASS OK`
   line, and a full pass's line also gives the number open.

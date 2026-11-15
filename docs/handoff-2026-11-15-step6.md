@@ -8,7 +8,7 @@
 - **Step 5 is on `main`** (`b162219`, pushed), with this close-out on top.
   Design: `docs/superpowers/specs/2026-11-14-lgl-vg-step5-service-and-deploy-design.md`
   (the step 5 design). Its "What the rehearsal showed" has every result.
-- `npm test` passes (459). The harness's full set passes: 38 of 38, with
+- `npm test` passes (477). The harness's full set passes: 38 of 38, with
   `--once full`.
 - **Two images on Docker Hub,** `carlsmig/vg-sync`, both built from
   `b162219`:
@@ -19,11 +19,14 @@
 
   A push to `main` that changes more than `README.md` and `docs/**` builds
   another, so this close-out (it changes `CLAUDE.md`) will too.
-- **The deployer, log shipping and alert script are on branch `sync-deploy`
-  of `vg-utils`** (worktree `~/dev/tvcri/vg-utils-sync-deploy`), not yet
-  merged into its `main`. The engineer merges it.
-- **The two alerts are not created.** `alerts-sync.sh create` awaits the
-  engineer's go-ahead. Its `az` syntax was checked against `--help` only.
+- **The deployer, log shipping and alert script are in `vg-utils` `main`,**
+  merged from branch `sync-deploy` as `3e9fc82` (the branch and its
+  worktree are removed).
+- **The two alerts were created 2026-11-15, disabled.** They are enabled at
+  go-live with `alerts-sync.sh enable`. Azure rejects a 20-minute window,
+  so `vg-sync-silent` uses 15 minutes, checked every 5 (as
+  `vg-email-sidecar-silent`): three `SYNC ALIVE` lines are expected in each
+  window.
 - **The production service is not started,** and nothing on the VM has
   changed.
 - **The dev VG database holds the harness's invented data** (the harness
@@ -46,10 +49,14 @@
 - `src/lgl-vg/apply.js`: stops between writes; on a stop it saves memory
   and opens holds, but closes none.
 - Client fixes: the VG token response is checked; the LGL client retries a
-  network failure with the same 450-second backoff. A VG 403 and an LGL
-  401 or 403 are final (not retried hourly). The start-up checks are one
-  attempt each with a 15-second timeout, so start-up ends within the
-  deployer's 90-second gate; a signal during start-up stops at once.
+  network failure with the same 450-second backoff. A refused sign-in (a
+  Keycloak 401 or `invalid_client`, an LGL 401) is final (not retried
+  hourly); a VG or LGL 403 is not. Start-up checks VG then LGL inside one
+  80-second budget (each try at most 15 seconds, three tries 20 seconds
+  apart), so it ends within the deployer's 90-second gate. At start-up a
+  VG 403 from `GET /user` is not retried, and an LGL 429 counts as reached
+  (`STARTUP LGL reached (rate-limited)`). A signal during start-up stops at
+  once.
 - **Commands.** `node src/lgl-vg/main.js` with no command is the service.
   `--once full` replaced `full` (`npm run full` and the harness use it).
   `--once vg-check` and `--once lgl-check` are refused until step 6.
@@ -62,7 +69,7 @@
 - **CI.** `.github/workflows/publish-docker.yml`: on push to `main` and by
   hand, test, build, push `:<sha7>` and `:latest`, print the digest.
   `test.yml` stays the pull-request workflow.
-- **In `vg-utils`, branch `sync-deploy`:** `vm-sidecar-deploy` takes a
+- **In `vg-utils` `main` (merged as `3e9fc82`):** `vm-sidecar-deploy` takes a
   table of services, with `sync` beside `email` (`--service`,
   `SIDECAR_DEPLOY_STATE_DIR`, per-service rejected digests);
   `vm-logship` knows `tvcri-sync-1`, skips a missing container, and has
@@ -70,12 +77,13 @@
 
 ## Go-live tasks for the engineer
 
-All of these wait for the one go-live after step 7, except merging
-`sync-deploy` and creating the alerts, which can happen any time.
+All of these wait for the one go-live after step 7.
 
-1. Merge `vg-utils` branch `sync-deploy` into its `main`.
-2. Go-ahead to run `alerts-sync.sh create` (both alerts, disabled). Do
-   not re-run `create` after `enable`: it disables them again.
+1. ~~Merge `vg-utils` branch `sync-deploy` into its `main`.~~ Done
+   2026-11-15 (`3e9fc82`).
+2. ~~Create both alerts, disabled (`alerts-sync.sh create`).~~ Done
+   2026-11-15. Do not re-run `create` after `enable`: it disables them
+   again.
 3. On the VM, install the new `sidecar-deploy.py` and
    `ship-container-logs.py` (to `~/tvcri/sidecar-deploy/` and
    `~/tvcri/logship/`, as the deployer's README and the log shipper's
@@ -115,13 +123,11 @@ All of these wait for the one go-live after step 7, except merging
 ## The harness and the village-green generator
 
 The harness reseeds the dev VG database with village-green's demo-data
-generator (`~/dev/village-green/data` by default). That checkout is on a
-branch whose generator expects migration 0034. The dev API process has run
-since 2026-11-12 and has not migrated: the dev database is at 0033. The
-step 5 harness run used village-green `main`'s generator, through a
-temporary `HARNESS_GENERATOR_DIR` line in `.env.harness` (since removed).
-Before the next harness run, either restart the dev API so it migrates to
-0034, or set `HARNESS_GENERATOR_DIR` to a generator that matches 0033.
+generator (`~/dev/village-green/data` by default). The engineer restarted
+the dev VG API and the dev database is at migration 0034, matching that
+checkout's generator, so the harness uses it again with no override. (The
+step 5 harness run, with the database still at 0033, used village-green
+`main`'s generator through a temporary `HARNESS_GENERATOR_DIR` line.)
 
 ## Step 6
 
