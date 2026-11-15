@@ -359,7 +359,12 @@ their unlinks from its plan, and leaves any hold already open for those
 reasons as it is.
 
 Most checks find nothing new and end after one request. A check has "found
-a change" only when a comparison comes out as something other than `same`.
+a change" when its plan holds a write, a deferred decision, a hold opened,
+changed or closed, a memory row recorded, a link, a create, or a new last
+gift date. Steady states are not changes: a donor skipped, an open hold that
+stays open unchanged, a dismissed hold left dismissed. Only a check that
+found a change prints a line and appends to the decisions file, and only
+one of those writes a run row, when writing is on.
 
 **Gifts in the LGL check.** The service keeps the gifts from the last full
 pass in memory. Each LGL check asks for gifts updated since the day before
@@ -373,12 +378,19 @@ people. So a first gift recorded in LGL makes its donor appear in VG within
 the same few minutes.
 
 **Limits on checks.** The circuit breaker counts the people changed by all
-checks together over any 24 hours, read from the run rows, against the same
-limit as a full pass. When it trips, checks stop writing and report
-`PASS FAILED` until the engineer restarts the service. Separately, a VG
-check that finds more than 20 linked people changed does not read LGL one
-record at a time, which would run into LGL's rate limit. It starts a full
-pass instead.
+checks together over any 24 hours, read from the `ok` check run rows, against
+the same limit as a full pass. **(engineer, 2026-11-15)** Someone whose only
+change is a new last gift date does not count: gift dates are routine in a
+busy giving season and would trip the breaker as ordinary work. Field
+writes, links, follows, finishes and creates count. Each check run row
+stores this figure as `breakerPeople`, beside `peopleChanged`. When the
+breaker trips, the check writes nothing and reports `PASS FAILED`, and both
+checks stop until the next successful full pass, which clears the trip (the
+full pass has its own breaker). Separately, a VG check that finds more than
+20 linked people changed does not read LGL one record at a time, which would
+run into LGL's rate limit. It decides those pairs from the LGL cache, which
+is at most one LGL check old, and still advances its cursor. Queuing a full
+pass instead would loop: a full pass's own writes come back in the feed.
 
 The VG check runs more often because asking our own API is nearly free, and
 because the API already records every change to a person in `audit_event` as
@@ -396,8 +408,12 @@ taken from LGL's own clock. Each LGL check asks from two minutes before the
 cursor, and a full pass sets it to five minutes before the newest
 `updated_at` in its pull, so a record edited while a read was under way is
 read again and never missed. The VG cursor is the highest audit id handled.
-The endpoint returns only audit rows at least a few seconds old, so a change
-that commits late is not skipped. Records read twice compare as `same`.
+The feed scans audit rows past the cursor in id order and stops at the first
+missing id, since a gap is a write not yet committed. Only when the row after
+the gap is older than `VG_SYNC_CHANGE_GAP_SECONDS` (60) does it take the gap
+for a rollback and go past it. So a change that commits late is not skipped;
+one made just after a rolled-back write is seen up to a minute late. Records
+read twice compare as `same`.
 
 **Time zones.** LGL returns every timestamp in UTC, and the constituent
 search honors a UTC timestamp to the second. The cursors are LGL's own

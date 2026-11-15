@@ -4,7 +4,7 @@
 // account's own privacy acknowledgement in VG, only on request).
 
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfig } from './config.js'
@@ -333,9 +333,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     now: Date.now,
     onSignal: (name, fn) => process.on(name, fn),
     stdout: (t) => console.log(t),
-    writeFile: async (p, text) => {
+    // { append: true } adds to the file (a check's decisions go to one file a day)
+    writeFile: async (p, text, { append = false } = {}) => {
       await mkdir(dirname(p), { recursive: true })
-      await writeFile(p, text)
+      await (append ? appendFile : writeFile)(p, text)
     },
     readFile: (p) => readFile(p, 'utf8'),
   })
