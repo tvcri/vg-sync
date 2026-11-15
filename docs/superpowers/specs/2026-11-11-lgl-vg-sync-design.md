@@ -232,17 +232,19 @@ dependencies unless one earns its place. **(call)** This matches the code
 being ported from `lgl-import`.
 
 The service is a long-lived container, like the email sidecar. A small
-scheduler stays up and runs three things, one at a time: a check for VG
-changes every minute, a check for LGL changes every five minutes, and a full
-pass every night. The aim is that an edit in VG reaches LGL in about a
-minute, and an edit in LGL reaches VG within five while the office is
-active (fifteen after an idle hour). A new gift is picked up by the same LGL
-check.
+scheduler stays up and runs two kinds of job, one at a time: a tick, armed
+60 seconds after the previous tick ended, and a full pass every night. Each
+tick runs the check for VG changes; every fifth tick (every fifteenth after
+an idle hour) the same tick then runs the check for LGL changes. The ticks
+start after the first successful full pass. The aim is that an edit in VG
+reaches LGL in about a minute, and an edit in LGL reaches VG within about
+five while the office is active (fifteen after an idle hour). A new gift is
+picked up by the same LGL check.
 
 | Module (`src/lgl-vg/`) | Job |
 |---|---|
 | `main.js` | Starts the scheduler, or runs one check or full pass by hand |
-| `scheduler.js` | Decides when each check and full pass runs; never two at once; stops cleanly on shutdown |
+| `scheduler.js` | Runs the tick (the checks) and the full pass; never two at once; reports check failures; stops cleanly on shutdown |
 | `config.js` | Environment and the policy file |
 | `lgl.js` | LGL client (ported), read and write |
 | `vg.js` | VG API client, client-credentials sign-in |
@@ -269,7 +271,7 @@ design.
 
 | | VG check | LGL check | Full pass |
 |---|---|---|---|
-| When | Every minute | Every five minutes; every fifteen when idle | Nightly |
+| When | Every tick: 60 s after the previous tick ended | After the VG check of every fifth tick; every fifteenth when idle | Nightly |
 | Asks | VG: which people changed since the last check (one call to our own API) | LGL: constituents updated since the last check, and gifts updated since the day before the cursor's date (two requests) | Everything: every constituent and gift (7 requests, about 95 seconds), every person, all memory and holds |
 | Covers | Linked pairs whose VG person changed | Linked pairs whose constituent changed; last gift date and new donors where gifts changed | Every linked pair, last gift date, the donor rule, unlinked donors, constituents that have gone missing |
 
@@ -398,10 +400,14 @@ part of the change itself. This is the same idea as the email sidecar's
 notification table, read through an endpoint.
 
 **The LGL check backs off when idle.** After an hour in which neither check
-has found a change, it runs every fifteen minutes. The first change seen on
-either side returns it to five. It follows activity, not the clock, so late
-evenings and holidays need no schedule. The VG check stays at one minute
-always.
+has found a change, it runs on every fifteenth tick instead of every fifth.
+The service start counts as a change. The first change seen on either side
+returns it to five: if five or more ticks have passed since the last LGL
+check, it runs on that same tick, after the VG check that found the change,
+or on the next. The count goes up on every tick, whatever the VG check did.
+It follows activity, not the clock, so late evenings and holidays need no
+schedule. The VG check runs on every tick always. An LGL 429 puts the LGL
+check off to the first tick after LGL's five-minute pause.
 
 **Cursors.** The LGL cursor is the newest `updated_at` the service has seen,
 taken from LGL's own clock. Each LGL check asks from two minutes before the

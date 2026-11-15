@@ -212,7 +212,7 @@ test('a pass past its ceiling is aborted with timeout', async () => {
   assert.ok(s.out.includes('PASS FAILED full timed out after 30 minutes'), s.out.join('\n'))
   // the scheduler took it as a retryable failure: the heartbeat says failed, with a retry due in an hour
   await s.c.advance(5 * 60 * 1000)
-  assert.match(s.out.at(-1), /^SYNC ALIVE last-full=\S+ result=failed next-full=2026-11-12T11:30:00\.000Z$/)
+  assert.match(s.out.at(-1), /^SYNC ALIVE last-full=\S+ result=failed next-full=2026-11-12T11:30:00\.000Z last-vg-check=none last-lgl-check=none lgl-every=5m$/)
   await svc.stop()
 })
 
