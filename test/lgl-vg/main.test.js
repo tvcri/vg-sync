@@ -54,6 +54,7 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
         return json({ rulesId: 4 }, 201)
       }
       if (u.pathname === '/api/sync/fields' || u.pathname === '/api/sync/holds' || u.pathname === '/api/sync/runs') return json([])
+      if (u.pathname === '/api/sync/changes') return json({ lastAuditId: 0, more: false, persons: [] })
       if (u.pathname === '/api/persons') return json(personsBody ?? persons, personsStatus)
     }
     if (u.hostname === 'api.littlegreenlight.com') {

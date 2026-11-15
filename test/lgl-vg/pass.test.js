@@ -42,7 +42,7 @@ function world(n, changed) {
   return { constituents, gifts: base.map((c) => gift(c.id)), persons, memory }
 }
 
-function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], runs = [] } = {}) {
+function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], runs = [], pages = [{ lastAuditId: 12, more: false, persons: [] }] } = {}) {
   const calls = []
   const rec = (name, ret) => async (...a) => { calls.push([name, ...a]); return typeof ret === 'function' ? ret(...a) : ret }
   const vg = {
@@ -52,6 +52,7 @@ function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], r
     getSyncHolds: rec('getSyncHolds', holds),
     lastFullRun: rec('lastFullRun', last),
     recentRuns: rec('recentRuns', runs),
+    getChanges: rec('getChanges', () => pages.shift() ?? { lastAuditId: null, more: false, persons: [] }),
     startRun: rec('startRun', { runId: 9 }),
     finishRun: rec('finishRun', {}),
     getLinkedPersons: rec('getLinkedPersons', (cid) => w.persons.filter((p) => p.donor.lglConstituentId === String(cid))),
@@ -99,7 +100,7 @@ test('write run: startRun, writes, finishRun ok with a cursor five minutes befor
   assert.equal(fin[1], 9)
   assert.equal(fin[2].result, 'ok')
   assert.equal(fin[2].lglCursor, '2026-11-10T11:55:00.000Z')
-  assert.equal(fin[2].vgCursor, null)
+  assert.equal(fin[2].vgCursor, 12)
   assert.equal(fin[2].counts.constituents, 1)
   assert.match(f.out.at(-1), /^PASS OK full write-vg people=1 writes=1 stale=0 refused=0 deferred=0 links=0 creates=0 unlinks=0 holdsOpened=0 holdsClosed=0 holdsOpen=0$/)
   assert.ok(f.files[0].text.includes('"outcome":"written"'))
@@ -296,7 +297,7 @@ test('a write run refuses while another run is running', async () => {
 
   const dry = fakes({ runs: running(5) })
   assert.equal(await runFullPass(dry.args({ config: cfg })), 0)
-  assert.ok(!dry.names().includes('recentRuns'))
+  assert.ok(dry.calls.filter((c) => c[0] === 'recentRuns').every((c) => c[1].limit === 50)) // only the cursor lookup
 })
 
 test('the circuit breaker and the drop check are final', async () => {
@@ -329,7 +330,51 @@ test('onResult reports ok once', async () => {
   const f = fakes()
   const r = withResult(f)
   await runFullPass(r.args())
-  assert.deepEqual(r.results, [{ outcome: 'ok', retryable: false, error: null }])
+  assert.deepEqual(r.results, [{
+    outcome: 'ok', retryable: false, error: null,
+    lgl: { constituents: f.lgl.pullConstituents ? (await f.lgl.pullConstituents()) : null, gifts: await f.lgl.pullGifts() },
+    lglCursor: '2026-11-10T11:55:00.000Z', vgCursor: 12,
+  }])
+})
+
+test('a full pass records the feed end as vgCursor', async () => {
+  const f = fakes({ pages: [{ lastAuditId: 40, more: true, persons: [] }, { lastAuditId: 55, more: false, persons: [] }] })
+  assert.equal(await runFullPass(f.args({ writeVg: true, vgCursorFrom: 7 })), 0)
+  const feed = f.calls.filter((c) => c[0] === 'getChanges').map((c) => c[1])
+  assert.deepEqual(feed, [7, 40])
+  assert.ok(f.names().indexOf('getChanges') < f.names().indexOf('listPersons'))
+  assert.equal(f.calls.find((c) => c[0] === 'finishRun')[2].vgCursor, 55)
+  assert.ok(!f.calls.some((c) => c[0] === 'recentRuns' && c[1]?.limit === 50)) // the service's cursor wins
+  // nothing new after the cursor: the cursor passed in is kept
+  const g = fakes({ pages: [{ lastAuditId: null, more: false, persons: [] }] })
+  await runFullPass(g.args({ writeVg: true, vgCursorFrom: 7 }))
+  assert.equal(g.calls.find((c) => c[0] === 'finishRun')[2].vgCursor, 7)
+})
+
+test('the feed is read from the newest run row\'s cursor when the service knows none', async () => {
+  const runs = [{ runId: 3, vgCursor: null }, { runId: 2, vgCursor: 31 }, { runId: 1, vgCursor: 9 }]
+  const f = fakes({ runs })
+  await runFullPass(f.args({ writeVg: true }))
+  assert.deepEqual(f.calls.find((c) => c[0] === 'recentRuns')[1], { limit: 50 })
+  assert.equal(f.calls.find((c) => c[0] === 'getChanges')[1], 31)
+  const g = fakes({ runs: [{ runId: 1, vgCursor: null }] })
+  await runFullPass(g.args({ writeVg: true }))
+  assert.equal(g.calls.find((c) => c[0] === 'getChanges')[1], 0)
+})
+
+test('onResult carries the pull and both cursors', async () => {
+  const w = world(1, 1)
+  const f = fakes({ w })
+  const r = withResult(f)
+  await runFullPass(r.args({ vgCursorFrom: 3 }))
+  assert.deepEqual(r.results[0].lgl, { constituents: w.constituents, gifts: w.gifts })
+  assert.equal(r.results[0].lglCursor, '2026-11-10T11:55:00.000Z')
+  assert.equal(r.results[0].vgCursor, 12)
+  const g = fakes({ w })
+  const q = withResult(g)
+  await runFullPass(q.args({ snapshot: { constituents: w.constituents, gifts: w.gifts } }))
+  assert.ok(!('lgl' in q.results[0]))
+  assert.equal(q.results[0].lglCursor, null)
 })
 
 test('quiet leaves out the counts block', async () => {

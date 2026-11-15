@@ -18,7 +18,7 @@ function lglCursorOf(constituents) {
 }
 
 export async function runFullPass({
-  config, policy, vg, lgl = null, snapshot = null, writeVg = false, maxPeople = null,
+  config, policy, vg, lgl = null, snapshot = null, writeVg = false, maxPeople = null, vgCursorFrom = null,
   now, writeLines, stdout, out, signal = null, quiet = false, onResult = () => {},
 }) {
   const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-')
@@ -49,6 +49,20 @@ export async function runFullPass({
       gifts = await read(lgl.pullGifts())
     }
     checkStop()
+    // The feed is read through to its end before the people, so anything changed after the cursor is
+    // newer than what the pass reads. The content is ignored; only the end matters.
+    let vgCursor = vgCursorFrom
+    if (vgCursor === null) {
+      const recent = await read(vg.recentRuns({ limit: 50 }))
+      vgCursor = recent.find((r) => r.vgCursor !== null && r.vgCursor !== undefined)?.vgCursor ?? 0
+      checkStop()
+    }
+    for (;;) {
+      const page = await read(vg.getChanges(vgCursor))
+      checkStop()
+      if (page.lastAuditId !== null && page.lastAuditId !== undefined) vgCursor = page.lastAuditId
+      if (!page.more) break
+    }
     const persons = await read(vg.listPersons())
     checkStop()
     const memory = await read(vg.getSyncFields())
@@ -112,7 +126,7 @@ export async function runFullPass({
         result: 'ok',
         counts: { ...plan.counts, constituents: constituents.length, apply: applied.counts },
         lglCursor: snapshot ? null : lglCursorOf(constituents),
-        vgCursor: null,
+        vgCursor,
       })
       runId = null // finished; a later failure (writing the file) must not rewrite the row
     }
@@ -137,7 +151,11 @@ export async function runFullPass({
         'holdsOpened=0', 'holdsClosed=0', `holdsOpen=${openRead}`, `holdsPlanned=${plan.counts.holds + unlinked.holds.length}`,
         ...(trips ? ['breaker=would-trip'] : [])]
     stdout(`PASS OK full ${mode} people=${plan.counts.peopleChanged} ${parts.join(' ')}`)
-    result = { outcome: 'ok', retryable: false, error: null }
+    result = {
+      outcome: 'ok', retryable: false, error: null,
+      ...(snapshot ? {} : { lgl: { constituents, gifts } }),
+      lglCursor: snapshot ? null : lglCursorOf(constituents), vgCursor,
+    }
   } catch (err) {
     if (runId !== null) {
       try {

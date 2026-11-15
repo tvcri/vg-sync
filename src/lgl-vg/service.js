@@ -21,7 +21,7 @@ const STARTUP_MIN_TRY_MS = 1_000 // a try with less time than this is not worth 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const defaultFs = { readdir: fsReaddir, stat: fsStat, unlink: fsUnlink }
 
-// Deletes the full pass's decisions files (full-*.jsonl) in dir older than keepDays. Returns the count.
+// Deletes the decisions files (full-*.jsonl and checks-*.jsonl) in dir older than keepDays. Returns the count.
 export async function pruneDecisions({ dir, keepDays, now, readdir, stat, unlink }) {
   let names
   try {
@@ -33,7 +33,7 @@ export async function pruneDecisions({ dir, keepDays, now, readdir, stat, unlink
   const cutoff = now() - keepDays * DAY_MS
   let deleted = 0
   for (const name of names) {
-    if (!/^full-.*\.jsonl$/.test(name)) continue
+    if (!/^(full|checks)-.*\.jsonl$/.test(name)) continue
     const path = join(dir, name)
     if ((await stat(path)).mtimeMs < cutoff) {
       await unlink(path)

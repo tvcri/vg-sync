@@ -426,9 +426,13 @@ Both cursors are kept in the process and saved in every run row. **(call)**
 The service runs a full pass every time it starts, because the gifts it
 keeps in memory have to be reloaded. The cursors then come from that pass.
 
-**(call)** The VG cursor waits for step 6. Until the VG check exists, the run
-row records the LGL cursor (five minutes before the newest `updated_at`
-pulled) and `vgCursor` is `null`.
+**The VG cursor** is set by the full pass. Before it reads VG people, the pass
+reads the change feed through to its end (pages of 1000, following `more`),
+starting from the last cursor known: the service's own, else the newest run
+row with a non-null `vgCursor`, else 0. It ignores what the feed says and
+records the last `lastAuditId` as `vgCursor` in the run row, next to the LGL
+cursor (five minutes before the newest `updated_at` pulled). Anything changed
+after that point is newer than the people the pass reads.
 
 **The service's own writes** come back as changes on the next check. They
 compare as `same` and cost one extra read.

@@ -55,6 +55,7 @@ function setup({ whoAmI, probe, pullConstituents = hang } = {}) {
     getSyncHolds: async () => [],
     lastFullRun: async () => null,
     recentRuns: async () => [],
+    getChanges: async () => ({ lastAuditId: null, more: false, persons: [] }),
   }
   const lgl = {
     probe: async (opts) => { calls.probe++; calls.firstProbeOpts ??= opts; if (probe) return probe(opts); return { rateLimited: false } },
@@ -250,6 +251,19 @@ test('pruneDecisions deletes only old full-*.jsonl files', async () => {
   })
   assert.equal(n, 1)
   assert.deepEqual(deleted, ['out/full-a.jsonl'])
+})
+
+test('pruneDecisions deletes old checks files', async () => {
+  const ages = { 'checks-a.jsonl': 31, 'checks-b.jsonl': 29, 'full-c.jsonl': 40 }
+  const deleted = []
+  const n = await pruneDecisions({
+    dir: 'out', keepDays: 30, now: () => START,
+    readdir: async () => Object.keys(ages),
+    stat: async (p) => ({ mtimeMs: START - ages[p.split('/').pop()] * DAY }),
+    unlink: async (p) => { deleted.push(p) },
+  })
+  assert.equal(n, 2)
+  assert.deepEqual(deleted, ['out/checks-a.jsonl', 'out/full-c.jsonl'])
 })
 
 test('pruneDecisions treats a missing directory as nothing to delete', async () => {
