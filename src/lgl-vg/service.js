@@ -8,6 +8,7 @@ import { readdir as fsReaddir, stat as fsStat, unlink as fsUnlink } from 'node:f
 import { join } from 'node:path'
 import { runFullPass } from './pass.js'
 import { createScheduler } from './scheduler.js'
+import { runCheck as runCheckOnce } from './check.js'
 
 const DAY_MS = 86_400_000
 // Start-up checks VG, then LGL. Each check gets up to three tries, 20 s apart, each try with up to 15 s.
@@ -92,6 +93,9 @@ export async function startService({
   }
 
   let current = null // the running pass's AbortController
+  let currentCheck = null // the running check's AbortController
+  // The LGL cache and the cursors, set by each successful full pass and moved on by the checks.
+  const state = { cache: null, lglCursor: null, vgCursor: null }
   let stopping = false
 
   async function runFull() {
@@ -102,13 +106,21 @@ export async function startService({
     let result = { outcome: 'failed', retryable: true }
     try {
       await runFullPass({
-        config, policy, vg, lgl, snapshot: null, writeVg: config.writeVg, maxPeople: null,
+        config, policy, vg, lgl, snapshot: null, writeVg: config.writeVg, maxPeople: null, vgCursorFrom: state.vgCursor,
         now, writeLines, stdout, out: config.outDir, signal: controller.signal, quiet: true,
         onResult: (r) => { result = r },
       })
     } finally {
       clearTimer(timer)
       current = null
+    }
+    if (result.outcome === 'ok' && result.lgl) {
+      state.cache = {
+        constituents: new Map(result.lgl.constituents.map((c) => [String(c.id), c])),
+        gifts: new Map(result.lgl.gifts.map((g) => [String(g.id), g])),
+      }
+      state.lglCursor = result.lglCursor
+      state.vgCursor = result.vgCursor
     }
     if (result.outcome !== 'stopped') {
       try {
@@ -120,7 +132,24 @@ export async function startService({
     return { outcome: result.outcome, retryable: result.retryable }
   }
 
-  const scheduler = createScheduler({ now, setTimer, clearTimer, fullPassUtc: config.fullPassUtc, runFull, stdout })
+  // One check, with its own ceiling: a timeout resolves failed (check.js), a shutdown resolves stopped.
+  async function runCheck(kind, { lglPaused = false } = {}) {
+    const controller = new AbortController()
+    currentCheck = controller
+    if (stopping) controller.abort('shutdown')
+    const timer = setTimer(() => controller.abort('timeout'), config.checkTimeoutMinutes * 60_000)
+    try {
+      return await runCheckOnce({
+        kind, state, config, policy, vg, lgl, writeVg: config.writeVg, now, writeLines, stdout,
+        out: config.outDir, signal: controller.signal, lglAttempts: 1, lglPaused, quiet: true,
+      })
+    } finally {
+      clearTimer(timer)
+      currentCheck = null
+    }
+  }
+
+  const scheduler = createScheduler({ now, setTimer, clearTimer, fullPassUtc: config.fullPassUtc, runFull, stdout, runCheck })
   stdout(`STARTUP scheduler started write-vg=${config.writeVg ? 'on' : 'off'} nightly=${config.fullPassUtc}Z`)
   scheduler.start()
 
@@ -128,6 +157,7 @@ export async function startService({
     async stop() {
       stopping = true
       current?.abort('shutdown')
+      currentCheck?.abort('shutdown')
       await scheduler.stop()
     },
   }

@@ -10,7 +10,7 @@ const DAY = 86_400_000
 const config = {
   lgl: { membershipFundId: 5, paypalPaymentTypeId: 2 },
   circuitBreakerPeople: 50, maxConstituentDropPercent: 10, imageRevision: 'abc123',
-  writeVg: true, fullPassUtc: '07:00', outDir: 'out', decisionsKeepDays: 30, passTimeoutMinutes: 30,
+  writeVg: true, fullPassUtc: '07:00', outDir: 'out', decisionsKeepDays: 30, passTimeoutMinutes: 30, checkTimeoutMinutes: 5,
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
@@ -274,4 +274,67 @@ test('pruneDecisions treats a missing directory as nothing to delete', async () 
     unlink: async () => { throw new Error('not called') },
   })
   assert.equal(n, 0)
+})
+
+// Checks: the service wires check.js into the scheduler.
+const TICK = 60_000
+const settle = async () => { for (let i = 0; i < 10; i++) await flush() }
+const tick = async (s, ms = TICK) => { await s.c.advance(ms); await settle() }
+function checkSetup(over = {}) {
+  const s = setup({ pullConstituents: async () => [], ...over })
+  s.calls.changes = 0
+  Object.assign(s.deps.vg, { getSyncFieldsFor: async () => [], startRun: async () => ({ id: 1 }), finishRun: async () => {}, apiState: async () => ({}) })
+  s.deps.vg.getChanges = over.getChanges ?? (async () => { s.calls.changes++; return { lastAuditId: 7, more: false, persons: [] } })
+  return s
+}
+
+test('checks start after the start-up pass', async () => {
+  const s = checkSetup()
+  const svc = await startService({ ...s.deps, config: { ...config, writeVg: false } })
+  await settle()
+  const before = s.calls.changes // the full pass reads the feed once to set its cursor
+  await tick(s)
+  assert.ok(s.calls.changes > before, 'the tick ran a vg check')
+  assert.equal(s.out.some((l) => l.startsWith('CHECK FAILED')), false, s.out.join('\n'))
+  await svc.stop()
+})
+
+test('a check ceiling fails the check, not the service', async () => {
+  const s = checkSetup()
+  const svc = await startService({ ...s.deps, config: { ...config, writeVg: false } })
+  await settle()
+  let n = 0
+  s.deps.vg.getChanges = async () => { if (++n === 1) return hang(); return { lastAuditId: 7, more: false, persons: [] } }
+  await tick(s)
+  await tick(s, 5 * 60_000)
+  assert.ok(s.out.includes('CHECK FAILED vg-check timed out after 5 minutes'), s.out.join('\n'))
+  assert.equal(s.out.some((l) => l.startsWith('CHECK STOPPED')), false)
+  await tick(s)
+  assert.ok(n >= 2, 'the next tick ran another vg check')
+  await svc.stop()
+})
+
+test('stop aborts a running check', async () => {
+  const s = checkSetup()
+  const svc = await startService({ ...s.deps, config: { ...config, writeVg: false } })
+  await settle()
+  s.deps.vg.getChanges = async () => hang()
+  await tick(s)
+  await svc.stop()
+  assert.ok(s.out.includes('CHECK STOPPED vg-check shutdown'), s.out.join('\n'))
+  assert.equal(s.c.pending(), 0)
+})
+
+test('the cache from the full pass reaches the lgl check', async () => {
+  const jane = { id: 11, updated_at: '2026-11-10T00:00:00Z' }
+  const s = checkSetup({ pullConstituents: async () => [jane] })
+  const svc = await startService({ ...s.deps, config: { ...config, writeVg: false } })
+  await settle()
+  const asked = []
+  s.deps.lgl.constituentsSince = async (from) => { asked.push(from); return [] }
+  s.deps.lgl.giftsSince = async () => []
+  for (let i = 0; i < 6; i++) await tick(s)
+  assert.deepEqual(asked, ['2026-11-09T23:53:00.000Z'], s.out.join('\n')) // the pass's cursor (5 min back), less two minutes
+  assert.equal(s.out.some((l) => l.startsWith('CHECK FAILED')), false, s.out.join('\n'))
+  await svc.stop()
 })
