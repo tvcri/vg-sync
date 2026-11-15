@@ -12,8 +12,8 @@ VG-202611-521.
 An edit in LGL, or a new gift, should reach VG within minutes, not the next
 night. An edit in VG should be noticed within a minute. Step 6 adds the two
 change checks the sync design describes: the VG check every minute, and the
-LGL check every five minutes (every fifteen when idle). Both run as jobs in
-the step 5 scheduler.
+LGL check every five minutes (every fifteen when idle). Both run in one
+job, a tick, in the step 5 scheduler.
 
 Writes to LGL are still step 7. So in step 6 the VG check finds VG edits and
 plans the copy to LGL, but that plan is recorded as `deferred`, as the full
@@ -24,8 +24,8 @@ LGL data and gets its own review rounds.
 
 ## Goals
 
-- The service runs a VG check every minute and an LGL check every five
-  minutes, backing off to fifteen after an idle hour. Both start after the
+- The service runs a VG check every minute and an LGL check every fifth
+  minute, backing off to every fifteenth after an idle hour. Both start after the
   start-up full pass succeeds.
 - The LGL check picks up constituents changed in LGL and gifts that are new
   or changed: last gift dates, new donors linked or created, linked fields
@@ -47,6 +47,10 @@ LGL data and gets its own review rounds.
   run kinds `vg-check` and `lgl-check`, `GET /sync/runs?kind=&since=`, and
   `GET /sync/fields?personId=` already exist.
 - Any change to production, the deployer, log shipping or the alerts.
+- A private network path from the VM to the VG API and Keycloak. The
+  service calls their public hostnames. Today neither app has a private
+  endpoint (their VNet integration is outbound only), and the engineer
+  accepted that on 2026-11-15.
 
 ## Anti-goals
 
@@ -249,27 +253,40 @@ not change, since a gift does not move the constituent's `updated_at`.
   then they have no cache and no cursors. If the start-up pass fails, the
   checks wait for the hourly retry or the nightly pass, as in step 5. The
   failure alert already fires for that.
-- **The VG check** runs 60 seconds after the previous VG check ended, not
-  every 60 seconds on the clock. **(call)** A slow check never stacks up
-  behind itself.
-- **The LGL check** runs 5 minutes after the previous LGL check ended, or 15
-  minutes once neither check has found a change for 60 minutes. The service
-  start counts as a change, so the first hour runs at five minutes. When
-  either check finds a change while the LGL check is waiting on the
-  fifteen-minute interval, its next run is moved up to five minutes after
-  it last ended, or to now if that time has passed. The VG check always
-  stays at one minute.
+- **One timer, a tick.** **(engineer, 2026-11-15)** The scheduler has one
+  check timer. Each tick runs the VG check. Every fifth tick, or every
+  fifteenth once neither check has found a change for 60 minutes, the same
+  tick also runs the LGL check, after the VG check. The engineer proposed
+  this in place of two timers. It removes the second timer and the logic
+  for moving its next run up, and the two checks can never fall due at the
+  same moment. The service start counts as a change, so the first hour
+  uses every fifth tick.
+- **The next tick** is armed 60 seconds after the tick ended, not every 60
+  seconds on the clock. **(call)** A slow tick never stacks up behind
+  itself. So the LGL check runs about every five minutes plus the ticks'
+  running time. A quiet check takes well under a second.
+- **The count goes up on every tick, whatever happens.** It counts whether
+  the VG check succeeds, fails or finds nothing, so a VG outage does not
+  also hold back the LGL check. When a change is found while the count is
+  at fifteen, it drops to five. If five or more ticks have passed since the
+  last LGL check, the LGL check runs on the next tick.
+- **The two checks stay separate inside a tick.** Each has its own
+  ceiling, cursor, failure tracking and log lines. A failed or stopped VG
+  check does not skip the LGL check due on the same tick, unless the
+  failure was final or the service is stopping.
 - These are constants in the code, not configuration. **(call)** The sync
   design fixes them, and tests pin them.
 
 ### One job at a time
 
-- The queue holds at most one job of each kind (`full`, `vg-check`,
-  `lgl-check`), and jobs run in the order they were queued.
-- A check that falls due while a full pass runs waits behind it, then runs
-  against the cursors the pass set. A nightly pass that falls due while a
-  check runs waits for the check, which is bounded by its ceiling.
-- A check's next timer is armed when that check ends, whatever the outcome.
+- The queue holds at most one job of each kind: `full` and `tick`. Jobs run
+  in the order they were queued.
+- A tick that falls due while a full pass runs waits behind it, then runs
+  against the cursors the pass set. Only one tick waits, and the count goes
+  up once. Ticks missed during a pass are not made up: the pass has just
+  read LGL. A nightly pass that falls due during a tick waits for it, which
+  is bounded by the two ceilings.
+- The next tick is armed when a tick ends, whatever the outcome.
 
 ### Ceiling
 
@@ -292,8 +309,8 @@ scheduled.
   next check is the retry. The full pass keeps its five attempts and long
   backoff.
 - **A 429 pauses the LGL reads of both checks for five minutes,** which is
-  LGL's own pause. An LGL check that falls due during the pause is put off
-  until it ends. A VG check that has touched constituents during the pause
+  LGL's own pause. An LGL check due on a tick during the pause is put off to
+  the first tick after it ends. A VG check that has touched constituents during the pause
   fails with `LGL rate-limited`, and its cursor stays put. A VG check with
   nothing touched still runs. This keeps a check from adding to the load
   while LGL is pausing.
@@ -373,9 +390,10 @@ constants.
 
 1. **Unit tests with injected clock and timers** (lesson 2 of the step 6
    handoff):
-   - the cadence, and the idle backoff and its return to five minutes;
-   - the queue with a full pass, a check falling due during a pass, and a
-     nightly pass falling due during a check;
+   - the tick and its count, the idle backoff and its return to five;
+   - the queue with a full pass, a tick falling due during a pass, and a
+     nightly pass falling due during a tick;
+   - a failed VG check still followed by the LGL check due on that tick;
    - the check ceiling, and a stop during a check's read and during its
      apply;
    - the 15-minute rule, its hourly repeat and `CHECK RECOVERED`;
