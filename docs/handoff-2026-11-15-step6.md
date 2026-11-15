@@ -5,7 +5,9 @@
 
 ## Where things stand
 
-- **Step 5 is on `main`** (`b162219`, pushed), with this close-out on top.
+- **Step 5 is on `main`.** `b162219` is pushed. The close-out and two
+  review fix waves (the second from the engineer's code review) were merged
+  on 2026-11-15 as a fast-forward to `79c65a1`, with this handoff on top.
   Design: `docs/superpowers/specs/2026-11-14-lgl-vg-step5-service-and-deploy-design.md`
   (the step 5 design). Its "What the rehearsal showed" has every result.
 - `npm test` passes (477). The harness's full set passes: 38 of 38, with
@@ -50,7 +52,7 @@
   and opens holds, but closes none.
 - Client fixes: the VG token response is checked; the LGL client retries a
   network failure with the same 450-second backoff. A refused sign-in (a
-  Keycloak 401 or `invalid_client`, an LGL 401) is final (not retried
+  Keycloak 401, `invalid_client` or `unauthorized_client`, an LGL 401) is final (not retried
   hourly); a VG or LGL 403 is not. Start-up checks VG then LGL inside one
   80-second budget (each try at most 15 seconds, three tries 20 seconds
   apart), so it ends within the deployer's 90-second gate. At start-up a
@@ -119,6 +121,59 @@ All of these wait for the one go-live after step 7.
   response headers fails the pass with a raw error message (still
   retried as a failed pass); tracked `.pyc` files in `vg-utils`
   (`vg-logs/`, `vm-logship/`).
+
+## Lessons from the step 5 build
+
+Step 5 was built task by task, a fresh implementer and a review per task,
+then a whole-branch review, then the engineer's own code review. What it
+taught, for step 6:
+
+1. **Timing is where the bugs were.** Nearly every Important finding was
+   about time, not logic: reads a stop could not interrupt, a pass ceiling
+   that could not cut a hung read, start-up retries that together outran the
+   deployer's 90-second gate, a rejected pass that went unlogged. Step 6 adds
+   a job every minute and every five, so answer these up front: what a stop
+   does mid-check, what a check's ceiling is, what happens when a check falls
+   due while the nightly runs, and whether start-up still fits the gate.
+2. **Inject the clock and test with it.** A full pass on the trial data takes
+   about a second, so the container rehearsal could not land a stop mid-pass.
+   Stops, ceilings and the schedule were proven only by unit tests with
+   injected timers (`scheduler.js`, `service.js`). Do the same for the check
+   cadence, the cursors and the backoff.
+3. **Which errors are final changed twice.** It settled as: only refused
+   credentials are final (a Keycloak 401, `invalid_client` or
+   `unauthorized_client`; an LGL 401). A 403 is retried inside a pass; at
+   start-up a VG 403 from `GET /user` (no role grant) fails at once. An LGL
+   429 at start-up counts as reached. Decide what a final error does to the
+   one- and five-minute checks before writing them: a check that recurs
+   every minute needs no hourly retry, but must not keep hammering a refused
+   credential or LGL's rate limit (about 300 requests, then a five-minute
+   pause).
+4. **Expect three rounds of review.** Per-task reviews found Important issues
+   in three tasks, the whole-branch review four more, the engineer's review
+   nine. Each round moved the design doc too. Change the design in the same
+   commit as the code, so the docs never lag a round behind.
+5. **Check the harness's generator before a long run.** The harness reseeds
+   with village-green's demo-data generator, which must match the dev
+   database's migration. Compare them first; if they differ, point
+   `HARNESS_GENERATOR_DIR` at a matching checkout (below) rather than
+   migrating the dev database.
+6. **Work in place, not in a worktree.** The harness reads `.env.harness`
+   (and `.env`, `.env.trial`) from the repo root, which a worktree lacks.
+7. **The session driving the build runs the long runs.** The harness and the
+   container rehearsal went better run once, attended, than inside an
+   implementer's task.
+8. **`vg-utils` is checked out on another branch with unfinished work.**
+   Changes there go on a new branch from its `main`, in a separate worktree,
+   then merge into `main`.
+9. **Every push to `main` builds an image** unless it changes only
+   `README.md` and `docs/**`. Harmless (nothing runs it until the VM's
+   compose file pins a digest), but it is why pushes were batched.
+10. **Azure alert windows come from a fixed list** (5, 10, 15, 30 minutes and
+    up). `alerts-sync.sh create` also disables an enabled alert; after
+    go-live use `enable` or `show` only.
+11. **A test helper that waits for a marker must also stop on the failure
+    marker.** One sat out its whole cap on `STARTUP FAILED`.
 
 ## The harness and the village-green generator
 
