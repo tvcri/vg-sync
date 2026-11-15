@@ -378,8 +378,8 @@ people. So a first gift recorded in LGL makes its donor appear in VG within
 the same few minutes.
 
 **Limits on checks.** The circuit breaker counts the people changed by all
-checks together over any 24 hours, read from the `ok` check run rows, against
-the same limit as a full pass. **(engineer, 2026-11-15)** Someone whose only
+checks together over the last 24 hours since the last successful full pass,
+read from the `ok` check run rows, against the same limit as a full pass. **(engineer, 2026-11-15)** Someone whose only
 change is a new last gift date does not count: gift dates are routine in a
 busy giving season and would trip the breaker as ordinary work. Field
 writes, links, follows, finishes and creates count. Each check run row

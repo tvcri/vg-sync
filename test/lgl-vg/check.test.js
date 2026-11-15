@@ -52,7 +52,9 @@ function fakes({
     listPersons: rec('listPersons', persons),
     getSyncFieldsFor: rec('getSyncFieldsFor', (ids) => memory.filter((m) => ids.includes(m.personId))),
     getSyncHolds: rec('getSyncHolds', holds),
-    recentRuns: rec('recentRuns', runs),
+    // as VG answers: kind and since (on startedAt) filter the rows
+    recentRuns: rec('recentRuns', (arg = {}) => runs.filter((r) =>
+      (!arg.kinds?.length || arg.kinds.includes(r.kind)) && (!arg.since || !(Date.parse(r.startedAt) < Date.parse(arg.since))))),
     startRun: rec('startRun', { runId: 9 }),
     finishRun: rec('finishRun', {}),
     getLinkedPersons: rec('getLinkedPersons', (cid) => persons.filter((p) => p.donor?.lglConstituentId === String(cid))),
@@ -295,9 +297,10 @@ const recentRunsArg = { kinds: ['vg-check', 'lgl-check'], since: '2026-11-14T10:
 test('the breaker counts ok check runs of the last 24 hours and trips without writing', async () => {
   const c = con(101)
   const runs = [
-    { runId: 1, kind: 'vg-check', result: 'ok', counts: { breakerPeople: 30, peopleChanged: 90 } },
-    { runId: 2, kind: 'lgl-check', result: 'ok', counts: { breakerPeople: 20 } },
-    { runId: 3, kind: 'lgl-check', result: 'failed', counts: { breakerPeople: 40 } },
+    { runId: 1, kind: 'vg-check', result: 'ok', startedAt: '2026-11-15T09:00:00.000Z', counts: { breakerPeople: 30, peopleChanged: 90 } },
+    { runId: 2, kind: 'lgl-check', result: 'ok', startedAt: '2026-11-14T12:00:00.000Z', counts: { breakerPeople: 20 } },
+    { runId: 3, kind: 'lgl-check', result: 'failed', startedAt: '2026-11-15T09:10:00.000Z', counts: { breakerPeople: 40 } },
+    { runId: 4, kind: 'vg-check', result: 'ok', startedAt: '2026-11-14T09:00:00.000Z', counts: { breakerPeople: 40 } }, // over 24 hours ago
   ]
   const setup = () => fakes({ persons: [per(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: con(101, { first_name: 'Janet' }) }, runs })
   const f = setup()
@@ -307,7 +310,7 @@ test('the breaker counts ok check runs of the last 24 hours and trips without wr
     outcome: 'failed', final: false, breaker: true, rateLimited: false, foundChange: true,
     error: 'circuit breaker: 51 people changed by checks in 24 hours, more than the limit of 50',
   })
-  assert.deepEqual(f.calls.find((x) => x[0] === 'recentRuns')[1], recentRunsArg)
+  assert.deepEqual(f.calls.filter((x) => x[0] === 'recentRuns').map((x) => x[1]), [{ kinds: ['full'], limit: 20 }, recentRunsArg])
   for (const n of WRITES) assert.ok(!f.names().includes(n), n)
   assert.equal(a.state.vgCursor, 5)
   assert.deepEqual(f.out, [])
@@ -320,9 +323,33 @@ test('the breaker counts ok check runs of the last 24 hours and trips without wr
   assert.equal(b.state.vgCursor, 12)
 })
 
+test('a successful full pass resets the check breaker window', async () => {
+  const c = con(101)
+  const runs = [
+    { runId: 1, kind: 'vg-check', result: 'ok', startedAt: '2026-11-15T02:00:00.000Z', counts: { breakerPeople: 50 } },
+    { runId: 2, kind: 'full', result: 'failed', startedAt: '2026-11-15T04:00:00.000Z', counts: {} },
+    { runId: 3, kind: 'full', result: 'ok', startedAt: '2026-11-15T03:00:00.000Z', counts: {} },
+    { runId: 4, kind: 'lgl-check', result: 'ok', startedAt: '2026-11-15T05:00:00.000Z', counts: { breakerPeople: 49 } },
+  ]
+  const f = fakes({ persons: [per(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: con(101, { first_name: 'Janet' }) }, runs })
+  const a = f.args({ writeVg: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } })
+  const r = await runCheck(a)
+  assert.equal(r.outcome, 'ok', r.error) // 49 + 1: the 50 before the full pass no longer count
+  assert.equal(r.breaker, false)
+  assert.deepEqual(f.calls.filter((x) => x[0] === 'recentRuns').map((x) => x[1]).slice(0, 2),
+    [{ kinds: ['full'], limit: 20 }, { kinds: ['vg-check', 'lgl-check'], since: '2026-11-15T03:00:00.000Z', limit: 1000 }])
+  assert.ok(f.names().includes('patchPerson'))
+
+  // one more person over the limit within the window trips it
+  const g = fakes({ persons: [per(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: con(101, { first_name: 'Janet' }) },
+    runs: [...runs, { runId: 5, kind: 'vg-check', result: 'ok', startedAt: '2026-11-15T06:00:00.000Z', counts: { breakerPeople: 1 } }] })
+  const b = await runCheck(g.args({ writeVg: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } }))
+  assert.deepEqual([b.breaker, b.error], [true, 'circuit breaker: 51 people changed by checks in 24 hours, more than the limit of 50'])
+})
+
 test('gift-date-only runs do not trip it', async () => {
   const c = con(101)
-  const runs = [{ runId: 1, kind: 'lgl-check', result: 'ok', counts: { breakerPeople: 50, peopleChanged: 200 } }]
+  const runs = [{ runId: 1, kind: 'lgl-check', result: 'ok', startedAt: '2026-11-15T09:00:00.000Z', counts: { breakerPeople: 50, peopleChanged: 200 } }]
   const f = fakes({ persons: [per(7, 101, { donor: linkTo(101, '2026-01-05') })], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: c }, runs })
   const a = f.args({ writeVg: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } })
   const r = await runCheck(a)

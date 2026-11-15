@@ -148,8 +148,12 @@ export async function runCheck({
     }
     planDecisions = [...plan.decisions, ...plan.unlinked.decisions]
 
-    // 4. The breaker: people changed by the ok checks of the last 24 hours, and by this plan.
-    const since = new Date(now() - DAY).toISOString()
+    // 4. The breaker: people changed by this plan and by the ok checks of the last 24 hours since
+    // the last successful full pass (its start), which clears a trip. VG filters `since` on startedAt.
+    const fulls = await fromVg(vg.recentRuns({ kinds: ['full'], limit: 20 }))
+    checkStop()
+    const fullStarts = fulls.filter((r) => r.result === 'ok').map((r) => Date.parse(r.startedAt)).filter(Number.isFinite)
+    const since = new Date(Math.max(now() - DAY, ...fullStarts)).toISOString()
     const runs = await fromVg(vg.recentRuns({ kinds: CHECK_KINDS, since, limit: 1000 }))
     checkStop()
     const earlier = runs.filter((r) => r.result === 'ok' && CHECK_KINDS.includes(r.kind ?? kind))

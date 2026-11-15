@@ -146,8 +146,12 @@ Common to both:
 6. **Circuit breaker.** A check counts `breakerPeople`: the people the plan
    would change, **leaving out anyone whose only change is a new last gift
    date**. Field writes, links, follows, finishes and creates count. It adds
-   up `breakerPeople` from the `ok` check runs of the last 24 hours (`GET
-   /sync/runs?kind=vg-check&kind=lgl-check&since=`), plus this plan. If the
+   up `breakerPeople` from the `ok` check runs of the last 24 hours since the
+   last successful full pass (`GET
+   /sync/runs?kind=vg-check&kind=lgl-check&since=`, with `since` the later of
+   24 hours ago and the `startedAt` of the newest `ok` full run), plus this
+   plan. Rows from before that pass would re-trip the next check, so the
+   window starts there. If the
    total is over `CIRCUIT_BREAKER_PEOPLE`, the check writes nothing and
    prints `PASS FAILED <kind> circuit breaker …`. Both checks then stop
    **until the next successful full pass**, which clears the trip. The full
