@@ -45,7 +45,9 @@ sign-in only once), then it prints `STARTUP FAILED <reason>` and exits 1, as
 it does for a configuration or policy-file error. Once started it runs a full
 pass at once and then nightly at `FULL_PASS_UTC` (default `07:00`, UTC),
 retries a failed pass an hour later (at most three times), and prints
-`SYNC ALIVE ...` every five minutes. Each pass prints only its `PASS` line. A
+`SYNC ALIVE ...` every five minutes. Each pass prints its `PASS` line, and
+until the first successful full run with a constituent count, one line before
+it saying the constituent-drop check is skipped. A
 pass running longer than `PASS_TIMEOUT_MINUTES` (default 30) is stopped and
 fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
 dry run. Decisions files go to `OUT_DIR` (default `out`); those older than

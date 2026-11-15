@@ -100,7 +100,9 @@ writes nothing, including run rows.
 5. The first job is a full pass, at once.
 
 A failure in step 2 or 3 is tried three times in all, 20 seconds apart,
-before `STARTUP FAILED`. **(call)** That fits inside the deployer's
+before `STARTUP FAILED`. **(call)** A refused sign-in (a wrong client
+secret: 401 or `invalid_client`) is tried once: retrying would only delay
+the same `STARTUP FAILED` by 40 seconds. (Ruled in the build, 2026-11-15.) That fits inside the deployer's
 90-second health gate, so a brief VG or Keycloak hiccup during a deploy
 delays the markers rather than rolling back a good image. The markers
 arrive in seconds on a normal start, long before the first full pass
@@ -114,7 +116,9 @@ arrive in seconds on a normal start, long before the first full pass
 - **Nightly full pass** at `FULL_PASS_UTC` (default `07:00`, that is 2 or
   3 a.m. in the customer's time zone). **(call)**
 - **Retry after a failed pass:** an hour later, up to three retries, then
-  wait for the next night. **(call)** Every failure prints `PASS FAILED`,
+  wait for the next night. **(call)** Each night starts with three fresh
+  retries. After a pass is stopped (only a shutdown stops one), nothing
+  more is scheduled; the next start runs a pass at once. Every failure prints `PASS FAILED`,
   so the failure alert fires; a retry that succeeds lets it resolve.
   Failures that would only repeat are **not** retried: the circuit
   breaker, the constituent-drop check, and a refused sign-in
@@ -148,8 +152,10 @@ Additions for step 5:
   adds the last time of each check.
 - `PASS STOPPED full <reason>`: a pass ended by shutdown. Not an alert
   pattern.
-- In the service, a full pass prints only its `PASS` line and, for a
-  write run, nothing between. The JSON counts block that `--once full`
+- In the service, a full pass prints its `PASS` line and, for a write run,
+  nothing between, except one line before the first successful full run
+  with a constituent count: `... the constituent-drop check is skipped
+  this pass`. The JSON counts block that `--once full`
   prints is left out of the service's log, because each of its lines would
   be a separate log row in Azure. The counts are in the run row and the
   `PASS OK` line.
@@ -181,12 +187,18 @@ scheduler and the heartbeat, and asks any running pass to stop.
   against the whole plan, and on a partial pass it could close a hold for
   a write that was never reached. The next pass reconciles everything.
 - A pass stopped while it is still reading (the LGL pull, about 95
-  seconds) is simply abandoned: nothing has been written.
+  seconds) is simply abandoned: nothing has been written. Each read is
+  raced against the stop, so a stop or the pass ceiling does not wait for
+  a read in progress.
 - A stopped pass records its run row (if one was opened) as `failed` with
   the error `stopped by shutdown`, writes its decisions file, and prints
   `PASS STOPPED`, not `PASS FAILED`.
 - The compose service gets `stop_grace_period: 30s`. A single VG write and
   its memory update take well under that.
+- The process exits as soon as it has printed `STOPPED`, so an abandoned
+  read cannot hold it past the grace period. Everything is recorded before
+  `STOPPED`. A `SIGTERM` during the start-up retries ends the process at
+  once: nothing has been written yet.
 
 ### Client fixes owed since step 1
 
@@ -260,6 +272,9 @@ required.
   matches `FAILED` anywhere in the line, so it covers both services
   unchanged.
 - `README.md` is updated to match.
+- **Where it is (2026-11-15):** this work and the log shipping below are on
+  branch `sync-deploy` of `vg-utils` (worktree `~/dev/tvcri/vg-utils-sync-deploy`),
+  not yet merged into its `main`. The engineer merges it.
 
 ## Log shipping (`vg-utils/vm-logship`)
 
@@ -269,7 +284,9 @@ required.
 - A `--no-ship` flag reads and archives locally but sends nothing to Azure
   and needs no managed identity. The rehearsal uses it with
   `BASE` overridden to a scratch directory, to check that the sync
-  container's lines are read and archived as expected.
+  container's lines are read and archived as expected. `--no-ship`
+  advances the real cursors, so it is used only with a scratch base.
+- On branch `sync-deploy` of `vg-utils`, with the deployer.
 
 ## The alerts
 
@@ -322,6 +339,49 @@ monitoring and is run only with the engineer's go-ahead.
    what it should. Then the alerts are created disabled, on the engineer's
    go-ahead.
 
+### What the rehearsal showed (2026-11-14 and 15)
+
+1. **Unit tests** pass.
+2. **The harness:** 38 of 38 scenarios, with `--once full`. (The dev VG
+   database was snapshotted first.)
+3. **The container,** built locally, on the harness's invented data with
+   `WRITE_VG=true`: the three markers in order; the start-up pass's
+   `PASS OK`; `SYNC ALIVE` on time; the nightly pass at the set minute,
+   `PASS OK`; `docker compose stop` and a restart, twice, each giving
+   `STOPPING`, `STOPPED` and exit 0. A pass on the harness data takes about
+   a second, so a stop could not be landed in the middle of one; a stop
+   during reads and during writes rests on the unit tests. The run guard
+   was shown by planting an unfinished run row: `--once full --write-vg`
+   run inside the container refused ("another sync run ... still running;
+   nothing was written") and exited 1, a dry run was not refused, and the
+   row was deleted afterward.
+4. **The deployer,** from branch `sync-deploy` against a scratch compose
+   file pinning `sync` to the first CI image (digest A), with `:latest` the
+   second (digest B):
+   - a dry run said it would deploy A to B; a real run printed `DEPLOYED
+     sync`, passed the gate, and rewrote the pin;
+   - `--fail-health-check` rolled back to A, recorded B as rejected and
+     exited 2; the next run was silent;
+   - a real gate failure (a wrong client secret in `.env`): the new
+     container printed `STARTUP FAILED`, the deployer printed `FAILED
+     deploy sync` and tried to roll back, and the rollback failed too
+     (`ROLLBACK FAILED`, exit 3), as it should, since the old image read
+     the same bad `.env`. With the secret restored the service started
+     clean;
+   - a compose file without a `sync` line: `--service sync` was silent,
+     exit 0. A run over all services on that file failed on `email` (no
+     `email` line), as it should while `email` is required. No stub
+     `email` service was deployed.
+5. **Log shipping:** `--no-ship` with a scratch base archived the
+   container's four lines (the three markers and `PASS OK`) and wrote its
+   cursor; a second run added none.
+6. **The alerts:** both queries, run against sample lines, matched what
+   they should (`PASS FAILED` and `STARTUP FAILED` but not lowercase or
+   `PASS OK`; no `SYNC ALIVE` gives no rows). `alerts-sync.sh show` found
+   neither alert. **They are not created yet:** `create` awaits the
+   engineer's go-ahead. Its exact `az` syntax was checked against `--help`
+   only, so the first real run may need a small fix.
+
 ## Order of work and the push to GitHub
 
 `origin/main` holds only the founding brief; steps 1 to 4 are local. The
@@ -337,8 +397,10 @@ never pushed.
 
 ## For the engineer to do
 
-- Add `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` to `tvcri/vg-sync`.
-- Go-ahead to create the two alerts, disabled.
+- ~~Add `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` to `tvcri/vg-sync`.~~
+  Done 2026-11-15.
+- Go-ahead to create the two alerts, disabled. Still open.
+- Merge `vg-utils` branch `sync-deploy` into its `main`.
 
 ## Left to the builder
 

@@ -407,14 +407,13 @@ writing to VG and one for writing to LGL, so VG writes can be exercised
 against a restored snapshot while the real LGL is only read. The running
 service takes them from `.env`; one run by hand (`main.js --once full`,
 `--once vg-check` or `--once lgl-check`) takes them as `--write-vg` and `--write-lgl`.
-`--once` arrives with the scheduler in step 5; until then the command is
-`full` (below). With
-neither, a pass writes nothing at all, including memory, holds or the run
+With neither, a pass writes nothing at all, including memory, holds or the run
 row, and prints its decisions as JSON lines.
 
-**(call)** Until the scheduler exists (step 5), the command is `full`:
-`node src/lgl-vg/main.js full [--write-vg] [--max-people N] [--out dir]
-[--snapshot file]`. Step 5 adds `--once` and the scheduler.
+**(call)** A full pass by hand is `node src/lgl-vg/main.js --once full
+[--write-vg] [--max-people N] [--out dir] [--snapshot file]`. It replaced
+the `full` command in step 5. `--once vg-check` and `--once lgl-check`
+arrive in step 6.
 
 **(call)** `--snapshot` refuses `--write-vg`. A stale snapshot reads as
 `lgl-changed` against newer memory and would write old values into VG.
@@ -986,8 +985,13 @@ The same guide settles three facts:
   line, and a full pass's line also gives the number open.
 - **Rate limit.** An LGL check costs two requests, at most about 580 a day
   and fewer when idle, plus a few per write. The LGL client waits out `Retry-After`. Without that
-  header it must back off long enough to outlast LGL's five-minute pause,
-  which the ported client does not (its fallback totals twelve seconds).
+  header it backs off 30, 60, 120 and 240 seconds, 450 in all, which
+  outlasts LGL's five-minute pause. A network failure is retried the same
+  way (step 5).
+- **The details.** The step 5 design
+  (`2026-11-14-lgl-vg-step5-service-and-deploy-design.md`) has the
+  deployer's table of services, the two alerts and their queries, and the
+  service's log lines.
 
 ## Build order
 
@@ -1028,7 +1032,14 @@ unattended in production.
 5. **Scheduler and deploy tooling.** The long-lived service running a nightly
    full pass, writing to VG only. Also the CI image build, the generalized
    deployer, log shipping and the two alerts, rehearsed outside production.
-   The production service is not started here.
+   The production service is not started here. **Done 2026-11-15:** the
+   full harness set passes with `--once full` (38 of 38). The image, run
+   locally in Docker Compose, gave the start-up markers, a nightly pass at
+   the set time and a clean stop. The deployer, run against a scratch
+   compose file, deployed the second CI image (`carlsmig/vg-sync`), rolled
+   it back on a forced gate failure, caught a real one (a wrong client
+   secret), and left a compose file without `sync` alone. The step 5
+   design, "What the rehearsal showed", has the details.
 6. **Change checks.** The one-minute VG check, the five-minute LGL check
    including gifts, and their cursors.
 7. **VG to LGL.** Writes to LGL, using the calls verified on 2026-11-11.
@@ -1037,11 +1048,11 @@ unattended in production.
    pass, `seed-import --write-vg` loads the import review's decisions into
    production VG (see "Staff decisions are not undone").
 
-Two checks remain and must not be forgotten:
+Two checks were set down here; one remains:
 
-- **Before step 5:** read the definition of the existing "email sidecar
-  silent" alert in Azure. Its query is not documented in any of the sibling
-  projects, and this service's heartbeat alert is to be modeled on it.
+- ~~**Before step 5:** read the definition of the existing "email sidecar
+  silent" alert in Azure.~~ Done 2026-11-14; the step 5 design, "The
+  alerts", records it and the sync's alert built on it.
 - **Before step 7:** send LGL a real, verifiable address on a test record
   and see whether address verification rewrites it. Partly answered on the
   trial account (2026-11-12 and 13): every verified address is rewritten
