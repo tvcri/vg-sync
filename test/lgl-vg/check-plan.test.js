@@ -63,13 +63,30 @@ test('a changed gift touches its constituent', () => {
   assert.equal(added.cache.gifts.size, 3)
 })
 
-test('every constituent given is touched and replaces its entry', () => {
+test('a constituent new to the cache or with a newer updated_at is touched and replaces its entry', () => {
   const cache = cacheOf([con(101)])
-  const fresh = con(101, { first_name: 'Janet' })
+  const fresh = con(101, { first_name: 'Janet', updated_at: '2026-11-15T10:05:00Z' })
   const { touched, cache: next } = mergeLglChanges(cache, { constituents: [fresh, con(103)] })
   assert.deepEqual([...touched].sort(), ['101', '103'])
   assert.equal(next.constituents.get('101').first_name, 'Janet')
   assert.equal(next.constituents.size, 2)
+})
+
+test('an unchanged constituent returned again touches nothing', () => {
+  // the cached copy may have another shape (read by the VG check's getConstituent): only updated_at is compared
+  const cached = { ...con(101), extra: 'from a single read' }
+  const cache = cacheOf([cached])
+  const { touched, cache: next } = mergeLglChanges(cache, { constituents: [con(101)] })
+  assert.deepEqual([...touched], [])
+  assert.equal(next.constituents.size, 1)
+  // the same instant spelled with milliseconds is the same
+  assert.deepEqual([...mergeLglChanges(cache, { constituents: [con(101, { updated_at: '2026-11-15T10:00:00.000Z' })] }).touched], [])
+})
+
+test('a constituent with a newer updated_at is touched', () => {
+  const cache = cacheOf([con(101)])
+  const { touched } = mergeLglChanges(cache, { constituents: [con(101, { updated_at: '2026-11-15T10:00:01Z' })] })
+  assert.deepEqual([...touched], ['101'])
 })
 
 test('mergeLglChanges does not mutate the cache', () => {

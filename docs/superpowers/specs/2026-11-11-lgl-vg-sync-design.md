@@ -338,7 +338,8 @@ system.
    cursor.
 2. Find the touched constituents. In the VG check, those linked to a
    changed person; changes to a person with no link wait for the full
-   pass. In the LGL check, every constituent returned and every
+   pass. In the LGL check, every constituent returned that is new to the
+   cache or whose `updated_at` differs from the cached copy's, and every
    constituent with a new or changed gift. For each touched linked
    constituent, read the other side and the pair's memory rows. For a
    couple, read both partners. **Every field of a touched pair is
@@ -360,7 +361,9 @@ pass, the only one that sees deletions. A check drops those results and
 their unlinks from its plan, and leaves any hold already open for those
 reasons as it is.
 
-Most checks find nothing new and end after one request. A check has "found
+Most checks find nothing new and end there: a quiet VG check costs one feed
+request (more only when the feed has pages to follow), a quiet LGL check its
+two searches. A check has "found
 a change" when its plan holds a write, a deferred decision, a hold opened,
 changed or closed, a memory row recorded, a link, a create, or a new last
 gift date. Steady states are not changes: a donor skipped, an open hold that
@@ -418,8 +421,12 @@ The feed scans audit rows past the cursor in id order and stops at the first
 missing id, since a gap is a write not yet committed. Only when the row after
 the gap is older than `VG_SYNC_CHANGE_GAP_SECONDS` (60) does it take the gap
 for a rollback and go past it. So a change that commits late is not skipped;
-one made just after a rolled-back write is seen up to a minute late. Records
-read twice compare as `same`.
+one made just after a rolled-back write is seen up to a minute late. The
+overlap means the LGL check reads the newest constituent it has seen (and
+any edited in the two minutes before) again on every check. A constituent
+read again with the same `updated_at` as its cached copy touches nothing, so
+the overlap does not make a check find a change; a VG audit row is never
+read twice.
 
 **Time zones.** LGL returns every timestamp in UTC, and the constituent
 search honors a UTC timestamp to the second. The cursors are LGL's own
@@ -463,7 +470,10 @@ the `full` command in step 5.
 `vgCursor` or `lglCursor`; with neither the command exits 2 and asks for it.
 `vg-check` starts with an empty cache and reads every touched constituent
 and its gifts; `lgl-check` first pulls every constituent and gift, so it
-cannot take a known gift for a new one. Both keep the full pass's LGL retries
+cannot take a known gift for a new one. That pull has read every edit
+already, so the constituents updated since the check asks from (two minutes
+before the cursor) are left out of its cache: they are touched, as they would
+be against a cache from an earlier pass. Both keep the full pass's LGL retries
 (the run is attended), print the counts and the `CHECK OK` line, and on
 failure print `CHECK FAILED <kind> <message>` and exit 1 at once.
 

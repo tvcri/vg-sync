@@ -10,17 +10,25 @@ import { reconcileHolds } from './holds.js'
 export const RECORD_REASONS = new Set(['lgl-missing', 'no-longer-donor'])
 
 const str = (x) => String(x)
+// The same string, or two spellings of the same instant (with and without milliseconds).
+const sameInstant = (a, b) => a === b || (Number.isFinite(Date.parse(a)) && Date.parse(a) === Date.parse(b))
 
 // Folds an LGL check's reads into the cache. Returns a new cache (the one given is never changed)
-// and the touched constituent ids: every constituent read, and the constituent of every gift that
-// is new or differs from the cached copy.
+// and the touched constituent ids: every constituent read that is new to the cache or whose
+// updated_at differs from the cached copy's, and the constituent of every gift that is new or
+// differs from the cached copy. A constituent is compared by updated_at alone: a copy cached from
+// the VG check's single read has another shape than a search result. The LGL check asks from two
+// minutes before its cursor, so the newest constituent it has seen comes back on every check;
+// unchanged, it touches nothing.
 export function mergeLglChanges(cache, { constituents = [], gifts = [] } = {}) {
   const cs = new Map(cache?.constituents ?? [])
   const gs = new Map(cache?.gifts ?? [])
   const touched = new Set()
   for (const c of constituents) {
-    cs.set(str(c.id), c)
-    touched.add(str(c.id))
+    const k = str(c.id)
+    const prior = cs.get(k)
+    cs.set(k, c)
+    if (!prior || !sameInstant(prior.updated_at, c.updated_at)) touched.add(k)
   }
   for (const g of gifts) {
     const k = str(g.id)

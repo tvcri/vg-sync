@@ -15,6 +15,10 @@ const FEED_LIMIT = 1000
 const CHECK_KINDS = ['vg-check', 'lgl-check']
 
 const str = (x) => String(x)
+
+// Where an LGL check asks from: two minutes before the cursor, so a record edited while the last
+// read was under way is read again.
+export const lglCheckFrom = (cursor) => new Date(Date.parse(cursor) - TWO_MINUTES).toISOString()
 const isTokenError = (err) => /^Keycloak token|openid-connect\/token/.test(String(err?.message))
 const is4xx = (err) => Number.isInteger(err?.status) && err.status >= 400 && err.status < 500
 
@@ -107,8 +111,7 @@ export async function runCheck({
       }
     } else {
       if (!state.lglCursor) throw new Error('no LGL cursor: a full pass has not succeeded yet')
-      const cursorT = Date.parse(state.lglCursor)
-      const fromIso = new Date(cursorT - TWO_MINUTES).toISOString()
+      const fromIso = lglCheckFrom(state.lglCursor)
       const fromDate = new Date(Date.parse(state.lglCursor.slice(0, 10)) - DAY).toISOString().slice(0, 10)
       const constituents = await fromLgl(lgl.constituentsSince(fromIso, { attempts: lglAttempts }))
       checkStop()

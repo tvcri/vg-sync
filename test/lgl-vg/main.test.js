@@ -33,7 +33,7 @@ const persons = [
   },
 ]
 
-function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [], memory = [], acceptWrites = false } = {}) {
+function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [], lglPull = constituents, memory = [], acceptWrites = false } = {}) {
   const requests = []
   const calls = []
   const out = []
@@ -71,7 +71,7 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
         const upd = u.pathname.endsWith('/constituents/search') ? lglUpdated : []
         return json({ total_items: upd.length, items: upd })
       }
-      const items = u.pathname.endsWith('/constituents/search') ? constituents : gifts
+      const items = u.pathname.endsWith('/constituents/search') ? lglPull : gifts
       return json({ total_items: items.length, items })
     }
     return json({}, 404)
@@ -532,6 +532,16 @@ test('a check by hand is dry without --write-vg and writes with it', async () =>
   assert.match(wet.out.at(-1), /^CHECK OK vg-check write-vg people=1 writes=1 /)
   assert.ok(wet.requests.some((r) => r.startsWith('PATCH /api/persons/10')), wet.requests.join('\n'))
   assert.ok(wet.requests.includes('POST /api/sync/runs'))
+})
+
+test('lgl-check by hand touches a constituent its own pull already holds, when it is in the window', async () => {
+  // The pull before the check reads the edit already: a constituent changed since two minutes
+  // before the cursor is still touched, as the service's cache (from an earlier pass) would have it.
+  const edited = { ...constituents[0], updated_at: '2026-11-11T09:30:00Z' }
+  const older = { ...constituents[0], id: 2, updated_at: '2026-11-11T08:00:00Z' }
+  const h = checkHarness({ ...plannedWrite(), lglPull: [edited, older], lglUpdated: [edited] })
+  assert.equal(await run(['--once', 'lgl-check', '--since', '2026-11-11T09:00:00Z'], h.deps), 0)
+  assert.match(h.out.at(-1), /^CHECK OK lgl-check dry-run people=1 writes=1 /)
 })
 
 test('a check by hand that finds nothing says so', async () => {

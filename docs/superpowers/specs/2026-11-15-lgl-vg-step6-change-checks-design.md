@@ -210,15 +210,22 @@ that found a change prints a line.
   expands, and `gifts/search` with `updated_from` set to the day before the
   cursor's date. These are two requests, plus more pages on a busy day.
 - **Touched:**
-  - every constituent returned (it replaces its entry in the cache);
+  - every constituent returned that is new to the cache or whose
+    `updated_at` differs from the cached copy's (it replaces its entry in
+    the cache). Only `updated_at` is compared, not the whole record: a
+    copy cached from the VG check's single read has another shape than a
+    search result. Asking from two minutes before the cursor returns the
+    newest constituent already seen on every check; unchanged, it touches
+    nothing, so it neither prints `CHECK OK` nor holds off the idle
+    backoff;
   - every constituent with a gift that is new to the cache or differs from
     the cached copy (the cache is updated).
 
   A gift the cache already holds unchanged touches nothing. That is why the
   gift cache exists: on a busy day the date-only gift filter returns today's
   and yesterday's gifts on every check. **(call)** The cache is updated only
-  when the check succeeds, so a failed check's gifts still count as new on
-  the retry.
+  when the check succeeds, so a failed check's gifts and constituents
+  still count as new on the retry.
 - **New cursor:** the newest `updated_at` among the constituents returned,
   if it is later than the cursor.
 
@@ -488,6 +495,16 @@ constants.
      served by `--once full`;
    - `--once lgl-check --since <a week back>`: exit 0; 2 people, 2 writes,
      2 deferred, 3 holds opened.
+
+**After the rehearsal (review fix).** The `CHECK OK lgl-check … deferred=1`
+on the fifth tick above was the newest constituent read again through the
+two-minute overlap: every returned constituent counted as touched, so with a
+deferred decision on that pair every LGL check found a change, wrote a run
+row, and kept the idle backoff from starting. A returned constituent now
+counts as touched only when the cache lacks it or holds another
+`updated_at`. A check by hand, whose cache is a pull made just before, leaves
+the constituents in the check's window out of that cache, so it still
+touches them.
 
 ## Left to the builder
 

@@ -15,7 +15,7 @@ import { parsePolicy } from './policy.js'
 import { runFullPass } from './pass.js'
 import { importSeed } from './seed.js'
 import { startService } from './service.js'
-import { runCheck } from './check.js'
+import { runCheck, lglCheckFrom } from './check.js'
 import { mergeLglChanges } from './check-plan.js'
 
 const USAGE = `Usage:
@@ -178,7 +178,11 @@ async function check(kind, argv, { env, fetchImpl = fetch, sleep, now, stdout, w
     } else {
       state.lglCursor = cursor
       // With no cache the check could not tell a new gift from a known one: pull it first, as a full pass does.
-      const constituents = await lgl.pullConstituents()
+      // A constituent is touched only when the cache lacks it or holds another updated_at, and this pull
+      // has read every edit already. So the constituents the check's own search will return (those
+      // updated since it asks from) are left out of the cache, as a cache from an earlier pass would lack them.
+      const from = Date.parse(lglCheckFrom(cursor))
+      const constituents = (await lgl.pullConstituents()).filter((c) => !(Date.parse(c.updated_at) >= from))
       const gifts = await lgl.pullGifts()
       state.cache = mergeLglChanges(null, { constituents, gifts }).cache
       extra = {}

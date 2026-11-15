@@ -275,6 +275,24 @@ test('a quiet lgl check updates the cursor and cache and prints nothing', async 
   assert.deepEqual([f.out, f.files], [[], []])
 })
 
+test('a second lgl check over an unchanged constituent with a deferred field is quiet', async () => {
+  // The search asks from two minutes before the cursor, so the newest constituent comes back again.
+  const before = con(201, { updated_at: '2026-11-15T08:00:00Z' })
+  const c = con(201, { updated_at: '2026-11-15T09:30:00Z' })
+  const f = fakes({ persons: [per(8, 201, { firstName: 'Janet' })], memory: agreedAt(c, 8), since: { constituents: [c], gifts: [gift(201)] } })
+  const a = f.args({ kind: 'lgl-check', state: { cache: cacheOf([before]), lglCursor: '2026-11-15T09:00:00.000Z', vgCursor: 5 } })
+  const first = await runCheck(a)
+  assert.equal(first.outcome, 'ok', first.error)
+  assert.equal(first.foundChange, true)
+  assert.match(f.out.at(-1), /^CHECK OK lgl-check dry-run people=0 writes=0 deferred=1 /)
+  const printed = f.out.length
+  const second = await runCheck(a)
+  assert.deepEqual(second, { outcome: 'ok', final: false, breaker: false, rateLimited: false, foundChange: false, error: null })
+  assert.equal(f.out.length, printed, 'no CHECK OK line')
+  assert.equal(f.files.length, 1, 'no second decisions file entry')
+  assert.equal(a.state.lglCursor, '2026-11-15T09:30:00Z')
+})
+
 test('a failed lgl check leaves the cache and cursor unchanged', async () => {
   const c = con(201, { updated_at: '2026-11-15T09:30:00Z' })
   const f = fakes({
