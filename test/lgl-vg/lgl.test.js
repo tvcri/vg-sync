@@ -235,3 +235,58 @@ test('a 401 (a bad API key) is final; a 403 or a 404 is not', async () => {
     await assert.rejects(other.pullGifts(), (err) => !err.final && err.status === status)
   }
 })
+
+test('getConstituent sends no query string', async () => {
+  const calls = []
+  const lgl = createLglClient({ apiKey: 'k', sleep: noSleep, fetchImpl: fakeFetch([{ body: { id: 42 } }], calls) })
+  assert.deepEqual(await lgl.getConstituent(42), { id: 42 })
+  assert.ok(calls[0].url.href.endsWith('/constituents/42.json'))
+  assert.equal(calls[0].url.search, '')
+})
+
+test('attempts: 1 does not retry a 429', async () => {
+  const calls = []
+  const lgl = createLglClient({ apiKey: 'k', sleep: noSleep, fetchImpl: fakeFetch([{ status: 429 }, { body: { id: 42 } }], calls) })
+  await assert.rejects(lgl.getConstituent(42, { attempts: 1 }), (e) => e.status === 429)
+  assert.equal(calls.length, 1)
+})
+
+test('constituentGifts pages the constituent gifts path', async () => {
+  const calls = []
+  const lgl = createLglClient({
+    apiKey: 'k', sleep: noSleep,
+    fetchImpl: fakeFetch([{ body: { items: items(2), total_items: 2 } }], calls),
+  })
+  assert.equal((await lgl.constituentGifts(7)).length, 2)
+  assert.equal(calls[0].url.pathname, '/api/v1/constituents/7/gifts.json')
+  assert.equal(calls[0].url.searchParams.get('limit'), '1000')
+})
+
+test('constituentsSince sends updated_from and the expands', async () => {
+  const calls = []
+  const lgl = createLglClient({
+    apiKey: 'k', sleep: noSleep,
+    fetchImpl: fakeFetch([{ body: { items: items(1), total_items: 1 } }], calls),
+  })
+  await lgl.constituentsSince('2026-11-15T10:00:00Z')
+  assert.equal(calls[0].url.pathname, '/api/v1/constituents/search')
+  assert.equal(calls[0].url.searchParams.get('q[]'), 'updated_from=2026-11-15T10:00:00Z')
+  assert.equal(calls[0].url.searchParams.get('expand'), 'email_addresses,street_addresses,phone_numbers')
+})
+
+test('giftsSince sends a bare date, and passes attempts through the pages', async () => {
+  const calls = []
+  const lgl = createLglClient({
+    apiKey: 'k', sleep: noSleep,
+    fetchImpl: fakeFetch([{ status: 429 }, { body: { items: items(1), total_items: 1 } }], calls),
+  })
+  await assert.rejects(lgl.giftsSince('2026-11-15', { attempts: 1 }), (e) => e.status === 429)
+  const lgl2 = createLglClient({
+    apiKey: 'k', sleep: noSleep,
+    fetchImpl: fakeFetch([{ body: { items: items(1), total_items: 1 } }], calls),
+  })
+  await lgl2.giftsSince('2026-11-15')
+  const u = calls.at(-1).url
+  assert.equal(u.pathname, '/api/v1/gifts/search')
+  assert.equal(u.searchParams.get('q[]'), 'updated_from=2026-11-15')
+})

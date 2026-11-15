@@ -91,6 +91,7 @@ export function loadConfig(env = process.env) {
     decisionsKeepDays: toPositive(env, 'DECISIONS_KEEP_DAYS', 30),
     // Capped at a day: past about 35,791 minutes Node's timer would fire at once.
     passTimeoutMinutes: toBounded(env, 'PASS_TIMEOUT_MINUTES', 30, 1440),
+    checkTimeoutMinutes: toBounded(env, 'CHECK_TIMEOUT_MINUTES', 5, 60),
     imageRevision: present(env.IMAGE_REVISION) ? String(env.IMAGE_REVISION).trim() : null,
   }
 }

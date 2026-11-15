@@ -55,11 +55,11 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
     }
   }
 
-  async function fetchAll(path, params = {}) {
+  async function fetchAll(path, params = {}, opts = {}) {
     const items = []
     let total = 0
     for (let offset = 0; ; ) {
-      const page = await get(path, { ...params, limit: PAGE, offset })
+      const page = await get(path, { ...params, limit: PAGE, offset }, opts)
       total = page.total_items
       items.push(...page.items)
       if (page.items.length === 0 || items.length >= total) break
@@ -75,6 +75,13 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
     pullConstituents: () =>
       fetchAll('/constituents/search', { expand: 'email_addresses,street_addresses,phone_numbers' }),
     pullGifts: () => fetchAll('/gifts/search'),
+    // Reads for the change checks. { attempts } bounds the retries of each request; a final non-OK
+    // answer throws with .status. The constituent read takes no query string (expand= answers 403).
+    getConstituent: (id, { attempts } = {}) => get(`/constituents/${id}.json`, {}, { attempts }),
+    constituentGifts: (id, { attempts } = {}) => fetchAll(`/constituents/${id}/gifts.json`, {}, { attempts }),
+    constituentsSince: (iso, { attempts } = {}) =>
+      fetchAll('/constituents/search', { 'q[]': `updated_from=${iso}`, expand: 'email_addresses,street_addresses,phone_numbers' }, { attempts }),
+    giftsSince: (date, { attempts } = {}) => fetchAll('/gifts/search', { 'q[]': `updated_from=${date}` }, { attempts }),
     // One cheap read, to show LGL answers and the API key still works: one attempt, a short timeout.
     // A 429 (LGL's rate-limit pause) counts as reached: LGL answered, and the key was not refused.
     // Resolves { rateLimited }; throws on any other failure.

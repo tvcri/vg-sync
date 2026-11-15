@@ -362,3 +362,67 @@ test('whoAmI takes a per-call timeout that bounds the whole call, token included
   const slowToken = createVgClient({ ...opts, fetchImpl: hang })
   await assert.rejects(slowToken.whoAmI({ timeoutMs: 20 }), /timed out after 0.02 s/)
 })
+
+test('getChanges passes after and limit', async () => {
+  const calls = []
+  const reply = { lastAuditId: 9, more: false, persons: [{ personId: '1', changes: [] }] }
+  const vg = make([tok(), { body: reply }], calls)
+  assert.deepEqual(await vg.getChanges(5, 200), reply)
+  assert.equal(calls[1].url.pathname, '/api/sync/changes')
+  assert.equal(calls[1].url.searchParams.get('after'), '5')
+  assert.equal(calls[1].url.searchParams.get('limit'), '200')
+  const calls2 = []
+  await make([tok(), { body: reply }], calls2).getChanges(0)
+  assert.equal(calls2[1].url.searchParams.get('limit'), '1000')
+})
+
+test('getSyncFieldsFor chunks 501 ids into two requests', async () => {
+  const calls = []
+  const vg = make([tok(), { body: [{ a: 1 }] }, { body: [{ a: 2 }] }], calls)
+  const ids = Array.from({ length: 501 }, (_, i) => String(i))
+  assert.deepEqual(await vg.getSyncFieldsFor(ids), [{ a: 1 }, { a: 2 }])
+  const reqs = calls.filter((c) => c.url.pathname === '/api/sync/fields')
+  assert.equal(reqs.length, 2)
+  assert.equal(reqs[0].url.searchParams.getAll('personId').length, 500)
+  assert.equal(reqs[1].url.searchParams.getAll('personId').length, 1)
+})
+
+test('getSyncFieldsFor([]) makes no request', async () => {
+  const calls = []
+  assert.deepEqual(await make([], calls).getSyncFieldsFor([]), [])
+  assert.equal(calls.length, 0)
+})
+
+test('recentRuns(20) still works', async () => {
+  const calls = []
+  await make([tok(), { body: [] }], calls).recentRuns(20)
+  assert.equal(calls[1].url.pathname, '/api/sync/runs')
+  assert.equal(calls[1].url.searchParams.get('limit'), '20')
+  const calls2 = []
+  await make([tok(), { body: [] }], calls2).recentRuns()
+  assert.equal(calls2[1].url.searchParams.get('limit'), '20')
+})
+
+test('recentRuns with kinds and since builds kind=vg-check&kind=lgl-check&since=…', async () => {
+  const calls = []
+  await make([tok(), { body: [] }], calls).recentRuns({ limit: 5, kinds: ['vg-check', 'lgl-check'], since: '2026-11-15T00:00:00Z' })
+  const q = calls[1].url.searchParams
+  assert.deepEqual(q.getAll('kind'), ['vg-check', 'lgl-check'])
+  assert.equal(q.get('since'), '2026-11-15T00:00:00Z')
+  assert.equal(q.get('limit'), '5')
+})
+
+test('apiState makes no token request and sends no Authorization header', async () => {
+  const calls = []
+  const state = { currentState: 'ready', since: 'x', dependencies: [] }
+  assert.deepEqual(await make([{ body: state }], calls).apiState(), state)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url.href, `${API}/op/state`)
+  assert.equal(calls[0].init.headers?.Authorization, undefined)
+})
+
+test('apiState fails on a non-OK answer after one attempt', async () => {
+  const calls = []
+  await assert.rejects(make([{ status: 503, body: 'down' }, { body: {} }], calls).apiState(), (e) => e.status === 503)
+  assert.equal(calls.length, 1)
+})

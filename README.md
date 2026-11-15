@@ -49,7 +49,8 @@ retries a failed pass an hour later (at most three times), and prints
 until the first successful full run with a constituent count, one line before
 it saying the constituent-drop check is skipped. A
 pass running longer than `PASS_TIMEOUT_MINUTES` (default 30, at most 1440) is
-stopped and fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
+stopped and fails. A change check (step 6) running longer than
+`CHECK_TIMEOUT_MINUTES` (default 5, at most 60) is stopped and fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
 dry run. Decisions files go to `OUT_DIR` (default `out`); those older than
 `DECISIONS_KEEP_DAYS` (default 30) are deleted after each pass.
 

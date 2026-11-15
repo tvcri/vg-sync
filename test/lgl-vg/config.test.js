@@ -81,3 +81,10 @@ test('PASS_TIMEOUT_MINUTES is capped at 1440 (a day)', () => {
   assert.throws(() => loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '1441' }), /PASS_TIMEOUT_MINUTES.*1440/)
   assert.throws(() => loadConfig({ ...full, PASS_TIMEOUT_MINUTES: '40000' }), /PASS_TIMEOUT_MINUTES.*1440/)
 })
+
+test('CHECK_TIMEOUT_MINUTES defaults to 5 and rejects 61', () => {
+  assert.equal(loadConfig(full).checkTimeoutMinutes, 5)
+  assert.equal(loadConfig({ ...full, CHECK_TIMEOUT_MINUTES: '60' }).checkTimeoutMinutes, 60)
+  assert.throws(() => loadConfig({ ...full, CHECK_TIMEOUT_MINUTES: '61' }), /CHECK_TIMEOUT_MINUTES/)
+  assert.throws(() => loadConfig({ ...full, CHECK_TIMEOUT_MINUTES: '0' }), /CHECK_TIMEOUT_MINUTES/)
+})

@@ -148,7 +148,32 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
       request('POST', '/sync/runs', { kind, switches, imageRevision, policyHash }),
     finishRun: (runId, { result, counts, lglCursor, vgCursor, error }) =>
       request('PATCH', `/sync/runs/${runId}`, { result, counts, lglCursor, vgCursor, error }),
-    recentRuns: (limit = 20) => get(`/sync/runs?limit=${limit}`),
+    recentRuns(arg = {}) {
+      const { limit = 20, kinds = [], since = null } = typeof arg === 'number' ? { limit: arg } : arg
+      const q = new URLSearchParams([['limit', String(limit)], ...kinds.map((k) => ['kind', k])])
+      if (since) q.set('since', since)
+      return get(`/sync/runs?${q}`)
+    },
+    // The change feed: people touched after audit id `after`, with their changes.
+    getChanges: (after, limit = 1000) => get(`/sync/changes?${new URLSearchParams({ after: String(after), limit: String(limit) })}`),
+    // Field memory for some people only, in chunks of 500.
+    async getSyncFieldsFor(personIds) {
+      const out = []
+      for (let i = 0; i < personIds.length; i += BATCH) {
+        const q = new URLSearchParams(personIds.slice(i, i + BATCH).map((id) => ['personId', String(id)]))
+        out.push(...(await get(`/sync/fields?${q}`)))
+      }
+      return out
+    },
+    // The API's own health: no sign-in, no Authorization header, 5 s, one attempt.
+    async apiState() {
+      const res = await timedFetch(`${apiUrl}/op/state`, { method: 'GET' }, { ms: 5000, signal: AbortSignal.timeout(5000) })
+      if (!res.ok) {
+        const text = await res.text()
+        throw httpError(`VG GET /op/state → ${res.status}: ${text.slice(0, 200)}`, res.status)
+      }
+      return res.json()
+    },
     async lastFullRun() {
       const runs = await get('/sync/runs?kind=full&limit=20')
       return runs.find((r) => r.result === 'ok') ?? null
