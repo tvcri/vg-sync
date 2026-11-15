@@ -349,6 +349,18 @@ The engineer chose option B on 2026-11-15:
   `last-lgl-check=<ISO time|none>` (the last successful check of each kind)
   and `lgl-every=<5|15>m`. The silent alert matches `SYNC ALIVE` only, so it
   is unaffected.
+- **Why VG failed.** When a check fails on a VG request (not a Keycloak
+  token request, and not an HTTP 4xx answer), it makes one `GET /op/state`.
+  This VG API endpoint needs no sign-in. It answers `{ currentState, since,
+  dependencies: { db, oidc } }`. The check adds the result to its
+  `CHECK FAILED` line and to any `PASS FAILED` it escalates to, for example
+  `(VG API unavailable since 2026-11-15T14:02:00Z; db down)`. If that
+  request also fails, the line says `(VG API state not reachable)`. The
+  lookup has a 5-second timeout, is never retried, and never changes what
+  the check does. **(engineer, 2026-11-15)** It replaces subscribing to
+  `/op/state/sse`. Within a minute the next tick finds the same thing, and
+  a stream held open for days needs reconnect logic, which is the kind of
+  timing code where step 5's bugs were.
 - A 403 inside a check is retryable, as inside a pass. If it persists, the
   15-minute rule reports it.
 
