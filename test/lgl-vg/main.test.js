@@ -32,7 +32,7 @@ const persons = [
   },
 ]
 
-function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody } = {}) {
+function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck = false, personsStatus = 200, personsBody, runs = [], feed = { lastAuditId: 0, more: false, persons: [] }, lglUpdated = [] } = {}) {
   const calls = []
   const out = []
   const written = []
@@ -53,12 +53,19 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
         posts.push(JSON.parse(init.body))
         return json({ rulesId: 4 }, 201)
       }
-      if (u.pathname === '/api/sync/fields' || u.pathname === '/api/sync/holds' || u.pathname === '/api/sync/runs') return json([])
-      if (u.pathname === '/api/sync/changes') return json({ lastAuditId: 0, more: false, persons: [] })
+      if (u.pathname === '/api/sync/runs') return json(runs)
+      if (u.pathname === '/api/sync/fields' || u.pathname === '/api/sync/holds') return json([])
+      if (u.pathname === '/api/sync/changes') return json(feed)
       if (u.pathname === '/api/persons') return json(personsBody ?? persons, personsStatus)
     }
     if (u.hostname === 'api.littlegreenlight.com') {
       if (!lgl) throw new Error('LGL must not be called')
+      if (/\/constituents\/\d+\.json$/.test(u.pathname)) return json(constituents[0])
+      if (/\/constituents\/\d+\/gifts\.json$/.test(u.pathname)) return json({ total_items: gifts.length, items: gifts })
+      if (u.searchParams.get('q[]')?.startsWith('updated_from=')) {
+        const upd = u.pathname.endsWith('/constituents/search') ? lglUpdated : []
+        return json({ total_items: upd.length, items: upd })
+      }
       const items = u.pathname.endsWith('/constituents/search') ? constituents : gifts
       return json({ total_items: items.length, items })
     }
@@ -229,15 +236,6 @@ test('the bare full command is gone', async () => {
   assert.equal(await run(['full'], h.deps), 2)
   assert.match(h.out.join('\n'), /^Usage:/)
   assert.deepEqual(h.calls, [])
-})
-
-test('--once lgl-check and --once vg-check are refused until step 6', async () => {
-  for (const kind of ['lgl-check', 'vg-check']) {
-    const h = harness({ lgl: false })
-    assert.equal(await run(['--once', kind], h.deps), 2)
-    assert.deepEqual(h.out, ['The VG and LGL checks arrive in step 6.'])
-    assert.deepEqual(h.calls, [])
-  }
 })
 
 test('--once with no kind or an unknown kind prints usage', async () => {
@@ -449,4 +447,81 @@ test('a signal during start-up stops at once: STOPPING, STOPPED, exit 0', async 
   h.handlers.SIGINT()
   assert.equal(await done, 0)
   assert.deepEqual(h.out, ['STOPPING', 'STOPPED'])
+})
+
+const checkHarness = (o = {}) => harness({ files: { 'policy.json': policyText() }, ...o })
+
+test('vg-check refuses with no cursor', async () => {
+  const h = checkHarness({ lgl: false })
+  assert.equal(await run(['--once', 'vg-check'], h.deps), 2)
+  assert.deepEqual(h.out, ['No VG cursor: give --after <auditId>'])
+  assert.equal(h.calls.some((c) => c.includes('littlegreenlight')), false)
+})
+
+test('vg-check takes --after, reads the touched constituent and its gifts, and prints CHECK OK', async () => {
+  const h = checkHarness({ feed: { lastAuditId: 9, more: false, persons: [{ personId: '10', changes: [] }] } })
+  assert.equal(await run(['--once', 'vg-check', '--after', '4'], h.deps), 0)
+  assert.ok(h.calls.some((c) => c.includes('/api/sync/changes') && c.includes('after=4')))
+  assert.ok(h.calls.some((c) => c.includes('/constituents/1.json')))
+  assert.ok(h.calls.some((c) => c.includes('/constituents/1/gifts.json')))
+  assert.ok(h.out.some((l) => /^CHECK OK vg-check dry-run people=\d+ /.test(l)))
+  assert.ok(h.out.some((l) => l.startsWith('{')), 'the counts block is printed')
+})
+
+test('vg-check takes its cursor from the newest run row with a vgCursor', async () => {
+  const runs = [
+    { runId: 3, kind: 'vg-check', result: 'failed', vgCursor: null, lglCursor: null },
+    { runId: 2, kind: 'full', result: 'ok', vgCursor: 7, lglCursor: '2026-11-11T00:00:00.000Z' },
+  ]
+  const h = checkHarness({ runs })
+  assert.equal(await run(['--once', 'vg-check'], h.deps), 0)
+  assert.ok(h.calls.some((c) => c.includes('/api/sync/changes') && c.includes('after=7')))
+})
+
+test('lgl-check refuses with no cursor', async () => {
+  const h = checkHarness({ lgl: false })
+  assert.equal(await run(['--once', 'lgl-check'], h.deps), 2)
+  assert.deepEqual(h.out, ['No LGL cursor: give --since <ISO time>'])
+  assert.equal(h.calls.some((c) => c.includes('littlegreenlight')), false)
+})
+
+test('lgl-check takes the cursor from the newest run row', async () => {
+  const runs = [
+    { runId: 3, kind: 'lgl-check', result: 'failed', vgCursor: null, lglCursor: null },
+    { runId: 2, kind: 'full', result: 'ok', vgCursor: 7, lglCursor: '2026-11-11T09:00:00.000Z' },
+  ]
+  const h = checkHarness({ runs })
+  assert.equal(await run(['--once', 'lgl-check'], h.deps), 0)
+  assert.ok(h.calls.some((c) => c.includes('littlegreenlight') && decodeURIComponent(c).includes('updated_from=2026-11-11T08:58:00.000Z')))
+})
+
+test('lgl-check takes --since and builds its cache before the check', async () => {
+  const h = checkHarness({ lglUpdated: [{ ...constituents[0], updated_at: '2026-11-11T09:30:00Z' }] })
+  assert.equal(await run(['--once', 'lgl-check', '--since', '2026-11-11T09:00:00Z'], h.deps), 0)
+  const firstCheck = h.calls.findIndex((c) => decodeURIComponent(c).includes('updated_from'))
+  const pull = h.calls.findIndex((c) => c.includes('/constituents/search') && !decodeURIComponent(c).includes('updated_from'))
+  assert.ok(pull >= 0 && pull < firstCheck)
+  assert.ok(h.calls.some((c) => c.includes('/gifts/search') && !decodeURIComponent(c).includes('updated_from')))
+})
+
+test('a check by hand is dry without --write-vg', async () => {
+  const h = checkHarness({ feed: { lastAuditId: 9, more: false, persons: [{ personId: '10', changes: [] }] } })
+  assert.equal(await run(['--once', 'vg-check', '--after', '4'], h.deps), 0)
+  assert.equal(h.written.some((w) => !w.path.startsWith('out/checks-')), false)
+})
+
+test('a check failure prints CHECK FAILED and exits 1', async () => {
+  const h = checkHarness({ personsStatus: 500, personsBody: { error: 'boom' }, feed: { lastAuditId: 9, more: false, persons: [{ personId: '10', changes: [] }] } })
+  assert.equal(await run(['--once', 'vg-check', '--after', '4'], h.deps), 1)
+  assert.match(h.out.at(-1), /^CHECK FAILED vg-check /)
+})
+
+test('--snapshot and --max-people are refused by the checks', async () => {
+  for (const kind of ['vg-check', 'lgl-check']) {
+    for (const opt of [['--snapshot', 'x.json'], ['--max-people', '3']]) {
+      const h = checkHarness({ lgl: false })
+      assert.equal(await run(['--once', kind, ...opt], h.deps), 2)
+      assert.match(h.out.join('\n'), /^Unknown option /)
+    }
+  }
 })

@@ -122,6 +122,25 @@ On a dry run the PASS line shows `holdsOpen` (open holds read) and
 `holdsPlanned` (holds this pass wants). The summary's `holdsIfWritten` says what a write
 run would do to the hold table (opened, seen, reopened, closed, left dismissed).
 
+## Running a change check by hand
+
+The service runs two light checks between the nightly passes; each can also be
+run once by hand, dry unless `--write-vg`:
+
+- `node src/lgl-vg/main.js --once vg-check [--write-vg] [--after <auditId>] [--out <dir>]`
+  decides the people VG changed since the cursor. The cursor is `--after`, else
+  the newest run row's `vgCursor`; with neither it exits 2 and says to give
+  `--after`. It reads each touched constituent and its gifts from LGL.
+- `node src/lgl-vg/main.js --once lgl-check [--write-vg] [--since <ISO time>] [--out <dir>]`
+  decides the constituents and gifts LGL changed since the cursor (`--since`,
+  else the newest run row's `lglCursor`). It first pulls every constituent and
+  gift, as a full pass does, so it takes about as long as one.
+
+Both print the counts and a `CHECK OK <kind> <dry-run|write-vg> ...` line and
+exit 0, or print `CHECK FAILED <kind> <message>` and exit 1 at once (no
+15-minute rule). `--snapshot` and `--max-people` are not accepted; the check
+breaker uses `CIRCUIT_BREAKER_PEOPLE`.
+
 ## Loading the import's decisions (once, before go-live)
 
 `node src/lgl-vg/main.js seed-import --file <import-prod-*.json>` reads the

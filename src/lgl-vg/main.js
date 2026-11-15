@@ -1,5 +1,5 @@
 // Command line for the LGL <-> VG service (no command: the scheduler; writes to VG only with WRITE_VG=true),
-// one full pass by hand (--once full, dry unless --write-vg), the report (writes nothing to LGL or VG), the
+// one full pass or one change check by hand (--once full, vg-check, lgl-check; dry unless --write-vg), the report (writes nothing to LGL or VG), the
 // one-time load of the import's decisions (dry unless --write-vg) and the service-account setup (records the
 // account's own privacy acknowledgement in VG, only on request).
 
@@ -15,10 +15,14 @@ import { parsePolicy } from './policy.js'
 import { runFullPass } from './pass.js'
 import { importSeed } from './seed.js'
 import { startService } from './service.js'
+import { runCheck } from './check.js'
+import { mergeLglChanges } from './check-plan.js'
 
 const USAGE = `Usage:
   node src/lgl-vg/main.js
   node src/lgl-vg/main.js --once full [--write-vg] [--max-people <n>] [--out <dir>] [--snapshot <file>]
+  node src/lgl-vg/main.js --once vg-check [--write-vg] [--after <auditId>] [--out <dir>]
+  node src/lgl-vg/main.js --once lgl-check [--write-vg] [--since <ISO time>] [--out <dir>]
   node src/lgl-vg/main.js report [--out <dir>] [--save-snapshot] [--snapshot <file>]
   node src/lgl-vg/main.js seed-import --file <import-run.json> [--write-vg]
   node src/lgl-vg/main.js setup [--acknowledge-privacy]
@@ -112,6 +116,83 @@ async function full(argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFil
     })
   } catch (err) {
     stdout(`PASS FAILED full ${err.message}`)
+    return 1
+  }
+}
+
+function parseCheckOptions(args, kind) {
+  const cursorFlag = kind === 'vg-check' ? '--after' : '--since'
+  const opts = { out: 'out', writeVg: false, cursor: null }
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '--write-vg') opts.writeVg = true
+    else if (a === '--out' || a === cursorFlag) {
+      const v = args[++i]
+      if (v === undefined) throw new Error(`${a} needs a value`)
+      if (a === '--out') opts.out = v
+      else if (kind === 'vg-check') {
+        if (!/^\d+$/.test(v)) throw new Error('--after must be a whole number (an audit id)')
+        opts.cursor = Number(v)
+      } else {
+        if (!Number.isFinite(Date.parse(v))) throw new Error('--since must be an ISO time')
+        opts.cursor = new Date(v).toISOString()
+      }
+    } else throw new Error(`Unknown option ${a}`)
+  }
+  return opts
+}
+
+// One change check by hand. The LGL requests keep the full pass's retries (the run is attended). A failure
+// is printed and exits 1 at once (the 15-minute rule is the service's); no signal or ceiling is wired, since
+// the run is at a terminal. Dry unless --write-vg.
+async function check(kind, argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read }) {
+  let opts
+  try {
+    opts = parseCheckOptions(argv, kind)
+  } catch (err) {
+    stdout(err.message)
+    return 2
+  }
+  try {
+    const config = loadConfig(env)
+    const policy = parsePolicy(await read(config.policyFile))
+    const vg = createVgClient({ ...config.vg, fetchImpl, now })
+    const lgl = createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
+    const field = kind === 'vg-check' ? 'vgCursor' : 'lglCursor'
+    let cursor = opts.cursor
+    if (cursor === null) {
+      const recent = await vg.recentRuns({ limit: 50 })
+      cursor = recent.find((r) => r[field] !== null && r[field] !== undefined)?.[field] ?? null
+    }
+    if (cursor === null) {
+      stdout(kind === 'vg-check' ? 'No VG cursor: give --after <auditId>' : 'No LGL cursor: give --since <ISO time>')
+      return 2
+    }
+    const state = { cache: null, lglCursor: null, vgCursor: null }
+    let extra
+    if (kind === 'vg-check') {
+      state.vgCursor = cursor
+      state.cache = { constituents: new Map(), gifts: new Map() }
+      // The cache is empty, so every touched constituent is read, with its gifts.
+      extra = { maxLglReads: Infinity, fetchGifts: (id) => lgl.constituentGifts(id) }
+    } else {
+      state.lglCursor = cursor
+      // With no cache the check could not tell a new gift from a known one: pull it first, as a full pass does.
+      const constituents = await lgl.pullConstituents()
+      const gifts = await lgl.pullGifts()
+      state.cache = mergeLglChanges(null, { constituents, gifts }).cache
+      extra = {}
+    }
+    const result = await runCheck({
+      kind, state, config, policy, vg, lgl, writeVg: opts.writeVg, now, writeLines: write, stdout, out: opts.out,
+      lglAttempts: 5, quiet: false, ...extra,
+    })
+    if (result.outcome === 'ok') return 0
+    // A by-hand check has no signal, so 'stopped' does not happen; if it did, it is reported as a failure too.
+    stdout(`CHECK FAILED ${kind} ${result.error ?? result.outcome}`)
+    return 1
+  } catch (err) {
+    stdout(`CHECK FAILED ${kind} ${err.message}`)
     return 1
   }
 }
@@ -265,10 +346,7 @@ export async function run(argv, deps) {
   if (argv.length === 0) return service(deps)
   if (argv[0] === '--once') {
     if (argv[1] === 'full') return full(argv.slice(2), deps)
-    if (argv[1] === 'vg-check' || argv[1] === 'lgl-check') {
-      stdout('The VG and LGL checks arrive in step 6.')
-      return 2
-    }
+    if (argv[1] === 'vg-check' || argv[1] === 'lgl-check') return check(argv[1], argv.slice(2), deps)
     stdout(USAGE)
     return 2
   }

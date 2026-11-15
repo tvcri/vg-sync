@@ -455,8 +455,17 @@ row, and prints its decisions as JSON lines.
 
 **(call)** A full pass by hand is `node src/lgl-vg/main.js --once full
 [--write-vg] [--max-people N] [--out dir] [--snapshot file]`. It replaced
-the `full` command in step 5. `--once vg-check` and `--once lgl-check`
-arrive in step 6.
+the `full` command in step 5.
+
+**(call)** One change check by hand is `--once vg-check [--write-vg]
+[--after <auditId>] [--out dir]` or `--once lgl-check [--write-vg] [--since
+<ISO time>] [--out dir]`. The cursor is the option, else the newest run row's
+`vgCursor` or `lglCursor`; with neither the command exits 2 and asks for it.
+`vg-check` starts with an empty cache and reads every touched constituent
+and its gifts; `lgl-check` first pulls every constituent and gift, so it
+cannot take a known gift for a new one. Both keep the full pass's LGL retries
+(the run is attended), print the counts and the `CHECK OK` line, and on
+failure print `CHECK FAILED <kind> <message>` and exit 1 at once.
 
 **(call)** `--snapshot` refuses `--write-vg`. A stale snapshot reads as
 `lgl-changed` against newer memory and would write old values into VG.
