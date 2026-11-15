@@ -517,7 +517,10 @@ row, and kept the idle backoff from starting. A returned constituent now
 counts as touched only when the cache lacks it or holds another
 `updated_at`. A check by hand, whose cache is a pull made just before, leaves
 the constituents in the check's window out of that cache, so it still
-touches them.
+touches them. The harness's LGL checks run by hand, so they still touch
+every pair seeded in the minutes before their full pass, as at the
+rehearsal: the scenarios show what a touched pair's check decides, and
+narrowing and the gift read alone rest on the unit tests.
 
 ## Left to the builder
 

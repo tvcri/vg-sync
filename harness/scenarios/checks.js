@@ -1,6 +1,15 @@
 // Change checks (step 6): a phase runs one check by hand (--once lgl-check or vg-check) in place of a
 // full pass. Each check reads the cursor its scenario's own earlier full pass set, so every scenario here
 // runs alone (the last two as one group of two pairs). Invented people in a town that does not exist.
+//
+// An LGL check by hand has no cache from that pass: it pulls LGL just before its search, so its pull
+// already holds every edit and every new gift. It leaves the constituents in its window (two minutes
+// before the cursor, which the full pass set five minutes before the newest updated_at) out of that
+// cache, so they are touched; the gifts stay in it, so a new gift touches nothing by itself. The pairs
+// here are seeded minutes before their full pass, so every one of them is in the window and is touched
+// through the constituent read. These scenarios show what a touched pair's check decides; the gift
+// read on its own, and narrowing to the touched constituents, rest on the unit tests
+// (test/lgl-vg/check-plan.test.js, check.test.js).
 import { GIFT, agreeing } from '../people.js'
 
 const town = { city: 'Zzyzxford', state: 'RI', zip: '00901' }
@@ -28,7 +37,7 @@ export default [
   },
   {
     name: 'new-gift-moves-last-gift-date-by-lgl-check',
-    why: 'Step 6, the LGL check: a new gift on a linked donor moves VG\'s last gift date on the next LGL check.',
+    why: 'Step 6, the LGL check: a new gift on a linked donor moves VG\'s last gift date on the next LGL check. By hand the check\'s own pull already holds the gift, so the donor is touched through the constituent read (seeded inside the check\'s window), not the gift read; the check then recomputes the last gift date from every gift.',
     since: 6,
     runAlone: true,
     ...agreeing(giving),
@@ -40,7 +49,7 @@ export default [
   },
   {
     name: 'first-gift-links-matching-person-by-lgl-check',
-    why: 'Step 6, the LGL check: a constituent with no gift is no donor, so the full pass links nothing. After a first gift, the LGL check matches the VG person with the same name and email and links them (Unlinked donors, Link).',
+    why: 'Step 6, the LGL check: a constituent with no gift is no donor, so the full pass links nothing. After a first gift, the LGL check matches the VG person with the same name and email and links them (Unlinked donors, Link). By hand the check\'s own pull already holds the gift, so the constituent is touched through its constituent read (seeded inside the check\'s window), not the gift read.',
     since: 6,
     runAlone: true,
     link: false,
@@ -68,7 +77,7 @@ export default [
   },
   {
     name: 'check-leaves-untouched-hold-open',
-    why: 'Step 6, holds in a check: a check passes on only the holds of the constituents it touched, so an open hold on a pair it did not touch stays open. The hold is a never-agreed first name from the seed (policy.json plans both-changed to-lgl, which is deferred in step 6, not held). Runs with check-leaves-untouched-hold-open-edited, whose LGL edit is what the check finds.',
+    why: 'Step 6, holds in a check: an open hold the check re-decides unchanged stays open and is not a change, while the same check applies another pair\'s LGL edit. The hold is a never-agreed first name from the seed (policy.json plans both-changed to-lgl, which is deferred in step 6, not held). By hand, the check\'s window re-reads this pair too (seeded minutes before the full pass), so it is touched, not left alone; that a check passes on only the holds of the constituents it touched rests on the unit tests. Runs with check-leaves-untouched-hold-open-edited, whose LGL edit is what the check finds.',
     since: 6,
     runAlone: 'check-leaves-untouched-hold-open',
     ...agreeing(holdPair, { lgl: { first_name: 'Tamsyn' } }),
@@ -80,7 +89,7 @@ export default [
   },
   {
     name: 'check-leaves-untouched-hold-open-edited',
-    why: 'The other pair of check-leaves-untouched-hold-open: its LGL edit gives the LGL check a change to apply while the held pair sits untouched.',
+    why: 'The other pair of check-leaves-untouched-hold-open: its LGL edit gives the LGL check a change to apply while the held pair\'s hold stays as it was.',
     since: 6,
     runAlone: 'check-leaves-untouched-hold-open',
     ...agreeing(otherPair),
