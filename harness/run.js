@@ -161,7 +161,9 @@ async function loadScenarioModules () {
 
 // The service's argv for one pass: writes to VG and to LGL (LGL_WRITE_ALLOW in .env.harness limits which constituents).
 export function passArgv ({ command, args }) {
-  return ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', '--write-lgl', ...args]
+  // seed-import takes no --write-lgl (it rejects it); only the --once pass and check commands do.
+  const lgl = command[0] === '--once' ? ['--write-lgl'] : []
+  return ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', ...lgl, ...args]
 }
 
 // Runs one pass (or one change check) as a child process; its output goes to the screen and to the log.

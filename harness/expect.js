@@ -8,7 +8,7 @@ const holdKey = (h) => `${h.field}|${h.reason}|${h.state ?? 'open'}`
 // vgPersons: one person or two, as GET /persons?projection=detail returns them
 //   (the donor row, when linked, is p.donor = { lglConstituentId, lastGiftDate }).
 // lglConstituent: harness/lgl-write.js getConstituent(id), or null when gone. For
-//   expect.lgl.lastGiftDate and .donor the constituent is read as a plain object
+//   expect.lgl.lastGiftDate, .donor, .addressee and .salutation the constituent is read as a plain object
 //   (c.lastGiftDate, c.donor), which the runner may set from the gifts it made.
 // holds: this scenario's rows from /sync/holds. decisions: the pass's rows for them
 //   (expect.writes, .lglWrites, .deferred and .records count outcomes write-vg, write-lgl, deferred and record).

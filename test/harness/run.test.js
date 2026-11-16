@@ -180,3 +180,8 @@ test('a pass runs with --write-vg and --write-lgl, then the phase args', () => {
   const argv = passArgv({ command: ['--once', 'full', '--out', 'd'], args: ['--x'] })
   assert.deepEqual(argv, ['src/lgl-vg/main.js', '--once', 'full', '--out', 'd', '--env', '.env.harness', '--write-vg', '--write-lgl', '--x'])
 })
+
+test('seed-import runs with --write-vg but not --write-lgl', () => {
+  const argv = passArgv({ command: ['seed-import', '--file', 'f'], args: [] })
+  assert.deepEqual(argv, ['src/lgl-vg/main.js', 'seed-import', '--file', 'f', '--env', '.env.harness', '--write-vg'])
+})
