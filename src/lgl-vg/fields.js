@@ -160,7 +160,8 @@ export function comparable (field, value) {
     case 'deceased': return value.flag ? `1|${value.date ?? ''}` : '0'
     case 'address': {
       const streetUnit = addressText(`${value.street ?? ''} ${value.unit ?? ''}`, { suffixes: true, houseNumber: true })
-      return [streetUnit, addressText(value.city, { suffixes: false }), norm(value.state), norm(value.zip).slice(0, 5)].join('|')
+      // a state name and its code are the same state: LGL is sent the code
+      return [streetUnit, addressText(value.city, { suffixes: false }), norm(stateCode(value.state) ?? value.state), norm(value.zip).slice(0, 5)].join('|')
     }
     default: return norm(value)
   }

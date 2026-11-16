@@ -304,3 +304,12 @@ test('hasDefaultNames is true only when both still match the current name', () =
   assert.equal(hasDefaultNames({ first_name: 'Jane', last_name: 'Doe', addressee: 'Jane Doe', salutation: 'Dear Friend' }), false)
   assert.equal(hasDefaultNames({ first_name: 'Jane', last_name: 'Doe', addressee: ' Jane  Doe ', salutation: 'Jane' }), true)
 })
+
+test('an address with a state name compares the same as one with its code', () => {
+  const a = { street: '12 Elm St', unit: null, city: 'Springfield', state: 'Rhode Island', zip: '99999' }
+  assert.equal(comparable('address', a), comparable('address', { ...a, state: 'RI' }))
+  assert.equal(comparable('address', a), comparable('address', { ...a, state: 'r.i.' }))
+  assert.notEqual(comparable('address', a), comparable('address', { ...a, state: 'MA' }))
+  // a state that is no code is compared as written
+  assert.notEqual(comparable('address', { ...a, state: 'Atlantis' }), comparable('address', { ...a, state: 'Lemuria' }))
+})

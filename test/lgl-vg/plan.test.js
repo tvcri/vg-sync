@@ -455,6 +455,37 @@ test('an address written to LGL carries a two-letter state; a VG state that is n
   assert.throws(() => plan({ constituents: [c], persons: [per({ detail: { state: 'Atlantis' } })], ...on }), /person 7.*address.*Atlantis/)
 })
 
+test('an unconvertible VG state does not fail the run when a guard holds the write', () => {
+  const box = con({ street_addresses: [{ id: 12, street: 'PO Box 12', city: 'Springfield', state: 'RI', zip5: '99999', is_preferred: true }] })
+  const persons = [per({ detail: { state: 'Atlantis' } })]
+  const p = plan({ constituents: [box], persons, ...on })
+  assert.deepEqual(p.holds.map((h) => [h.field, h.reason]), [['address', 'po-box']])
+  assert.deepEqual(p.lglWrites, [])
+  const c = con({ street_addresses: [{ id: 12, street: '40 Oak Ave', city: 'Springfield', state: 'RI', zip5: '99999', is_preferred: true }] })
+  const flapping = plan({ constituents: [c], persons, lglWriteCounts: new Map([['7|address', 4]]), ...on })
+  assert.deepEqual(flapping.holds.map((h) => [h.field, h.reason]), [['address', 'flapping']])
+  // the refusal's fingerprint is built from VG's value as read
+  const vgAddress = { street: '12 Elm St', unit: null, city: 'Springfield', state: 'Atlantis', zip: '99999' }
+  const refusal = {
+    holdId: '59', lglConstituentId: '101', personId: '7', field: 'address', reason: 'lgl-refused',
+    detail: { error: 'no' }, fingerprint: fp(['address', comparable('address', vgAddress)]), state: 'open',
+  }
+  const refused = plan({ constituents: [c], persons, refusals: [refusal], ...on })
+  assert.deepEqual(refused.holds.map((h) => [h.field, h.reason]), [['address', 'lgl-refused']])
+})
+
+test('an LGL write that would make no call is a skip decision, noted', () => {
+  // LGL's home number is unclean (eleven digits) but its last ten are VG's new number
+  const c = con({ phone_numbers: [{ id: 13, number: '2401-555-0101', phone_type_name: 'Home', is_preferred: true }] })
+  const p = plan({
+    constituents: [c], persons: [per({ phone: { phone: '401-555-0101', cell: null } })],
+    memory: [...agreedAt(con()).filter((r) => r.field !== 'phones'), mem('phones', { phone: '401-555-0199', cell: null })], ...on,
+  })
+  const [d] = decisionsFor(p, 'phones')
+  assert.deepEqual([d.case, d.action, d.outcome, d.note], ['both-changed', 'to-lgl', 'skip', 'no calls'])
+  assert.deepEqual([p.lglWrites, p.holds], [[], []])
+})
+
 test('an unconvertible VG state is deferred with a note when the write is not sent', () => {
   const c = con({ street_addresses: [{ id: 12, street: '40 Oak Ave', city: 'Springfield', state: 'RI', zip5: '99999', is_preferred: true }] })
   const persons = [per({ detail: { state: 'Atlantis' } })]

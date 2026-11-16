@@ -101,20 +101,14 @@ export function planLinked({
     if (d.field === 'address') w.address = { street: value.street, city: value.city, state: value.state, zip: value.zip }
   }
 
-  // An LGL write of `value` (VG's, in fields.js form) for one person's field, or a couple's shared
-  // field (`rows` holds every partner). The guards run first, in order: a refusal of this exact
-  // write, flapping, a PO box. Returns false, planning nothing, when the write would make no call.
+  // An LGL write of `value` (VG's, in fields.js form; null for an address whose VG state is not a
+  // code) for one person's field, or a couple's shared field (`rows` holds every partner). The guards
+  // run first, in order: a refusal of this exact write, flapping, a PO box. A merge that would make
+  // no call returns false, planning nothing; the caller decides what that means.
   const lglWrite = (c, lgl, rows, { value, merge = false }) => {
     const { constituentId: key, field: f, case: kase } = rows[0].dec
-    if (value === null) {
-      // VG's state comes from a picker, so one that is not a code breaks an invariant: a write that
-      // would be sent fails the run; one that will not be sent is deferred with no calls.
-      const vg = rows[0].r.vg
-      if (lglSend(key)) throw new Error(`VG person ${rows[0].dec.personId} address: state "${vg.state}" is not a two-letter state code`)
-      for (const x of rows) decisions.push({ ...x.dec, outcome: 'deferred', note: 'vg state not a code', calls: [] })
-      return true
-    }
-    const fpWrite = fingerprint([f, comparable(f, value)])
+    // comparable reduces a state to its code, so VG's value as read gives the same fingerprint
+    const fpWrite = fingerprint([f, comparable(f, value ?? rows[0].r.vg)])
     const guard = (reason, fpOf, detailOf) => { for (const x of rows) hold(x.dec, { reason, fingerprint: fpOf(x), detail: detailOf(x) }) }
     const refusal = rows.map((x) => lglRefused.get(`${key}|${x.dec.personId}|${f}|${fpWrite}`))
     if (refusal.some(Boolean)) {
@@ -135,12 +129,24 @@ export function planLinked({
         return true
       }
     }
+    if (value === null) {
+      // VG's state comes from a picker, so one that is not a code breaks an invariant: a write that
+      // would be sent fails the run; one that will not be sent is deferred with no calls.
+      if (lglSend(key)) throw new Error(`VG person ${rows[0].dec.personId} address: state "${rows[0].r.vg.state}" is not a two-letter state code`)
+      for (const x of rows) decisions.push({ ...x.dec, outcome: 'deferred', note: 'vg state not a code', calls: [] })
+      return true
+    }
     const write = {
       kind: 'lgl', constituentId: key, personIds: rows.map((x) => x.dec.personId), field: f, case: kase,
       value, expect: comparable(f, lgl.values[f]), fingerprint: fpWrite, merge,
     }
     const { calls } = buildLglCalls(write, c, { addresseeSetting })
-    if (!calls.length) return false
+    if (!calls.length) {
+      if (merge) return false
+      // nothing to send (LGL's read entry already holds VG's value, e.g. an unclean phone with the same digits)
+      for (const x of rows) decisions.push({ ...x.dec, outcome: 'skip', note: 'no calls' })
+      return true
+    }
     const send = Boolean(lglSend(key))
     lglWrites.push({ ...write, send })
     const outcome = send ? { outcome: 'write-lgl' } : { outcome: 'deferred', note: writeLgl ? 'not-allowed' : 'write-lgl off' }
