@@ -7,7 +7,7 @@ export const FIELDS = ['firstName', 'lastName', 'suffix', 'nickname', 'address',
 const EMAIL = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i
 const ZIP = /^\d{5}(-?\d{4})?$/
 const nul = (s) => (s == null || String(s).trim() === '' ? null : s)
-const isMobile = (p) => /mobile|cell/i.test(p.phone_type_name ?? '')
+export const isMobile = (p) => /mobile|cell/i.test(p.phone_type_name ?? '')
 
 // Picks the entry to use from a list: the preferred current one, or the only current one.
 function pick (list) {
@@ -20,7 +20,7 @@ function pick (list) {
   return { ambiguous: true }
 }
 
-function lglAddress (a) {
+export function lglAddress (a) {
   const { street, unit } = splitStreet(a.street)
   const city = cleanName(a.city)
   const state = stateCode(a.state)
