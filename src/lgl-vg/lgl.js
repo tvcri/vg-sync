@@ -20,9 +20,10 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
 
   // A 401 means the API key is wrong or revoked: retrying will not help, so the error is final. A 403 is
   // not: LGL is not known to answer a bad key with one, so it is left to the caller's retries.
-  // 429 and 5xx are retried for every method: LGL answered, so the call was not applied. A thrown fetch
-  // (network or timeout) leaves a POST's outcome unknown, so only GET and PATCH are retried then; a
-  // repeated PATCH sets the same values.
+  // A 429 is retried for every method: LGL refused the call before applying it. A 5xx, a thrown fetch
+  // (network) or a timeout may follow a POST that LGL applied, and a retry would add a duplicate entry, so
+  // a POST is retried on a 429 only. GET and PATCH are retried on all of these; a repeated PATCH sets the
+  // same values.
   async function request(method, path, { params = {}, body, attempts = MAX_ATTEMPTS, timeoutMs: callTimeoutMs = timeoutMs } = {}) {
     const retryOnThrow = method === 'GET' || method === 'PATCH'
     const url = new URL(`${baseUrl}${path}`)
@@ -45,7 +46,7 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
         if (err?.name === 'TimeoutError') throw new Error(`LGL ${method} ${path} timed out after ${callTimeoutMs / 1000} s`)
         throw err
       }
-      if ((res.status === 429 || res.status >= 500) && attempt < attempts - 1) {
+      if ((res.status === 429 || (retryOnThrow && res.status >= 500)) && attempt < attempts - 1) {
         const retryAfter = Number(res.headers.get('retry-after'))
         await sleep((retryAfter > 0 ? retryAfter : BACKOFF_SECONDS[attempt]) * 1000)
         continue
@@ -68,7 +69,12 @@ export function createLglClient({ apiKey, fetchImpl = fetch, sleep = defaultSlee
     return k
   }
   const listEntries = (id, kind, { attempts } = {}) =>
-    get(`/constituents/${id}/${entryKind(kind)}`, { limit: 100 }, { attempts }).then((page) => page.items)
+    get(`/constituents/${id}/${entryKind(kind)}`, { limit: 100 }, { attempts }).then((page) => {
+      if (page.items.length < page.total_items) {
+        throw new Error(`Incomplete read of /constituents/${id}/${kind}: got ${page.items.length} of ${page.total_items}`)
+      }
+      return page.items
+    })
 
   async function fetchAll(path, params = {}, opts = {}) {
     const items = []

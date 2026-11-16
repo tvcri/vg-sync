@@ -428,3 +428,24 @@ test('writes send JSON with the auth header', async () => {
     assert.equal(c.init.headers.Authorization, 'Basic ' + Buffer.from('k:').toString('base64'))
   }
 })
+
+test('a POST answered 502 is not retried', async () => {
+  const calls = []
+  const sleeps = []
+  const lgl = writeClient(fakeFetch([{ status: 502, body: {} }, { body: { id: 1 } }], calls), sleeps)
+  await assert.rejects(lgl.addEntry(7, 'email_addresses', { address: 'jane@example.org' }), (err) => err.status === 502)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(sleeps, [])
+})
+
+test('a PATCH answered 502 is retried', async () => {
+  const calls = []
+  const lgl = writeClient(fakeFetch([{ status: 502, body: {} }, { body: { id: 9 } }], calls))
+  await lgl.patchEntry('email_addresses', 9, { not_current: true })
+  assert.equal(calls.length, 2)
+})
+
+test('listEntries throws when the list is truncated', async () => {
+  const lgl = writeClient(fakeFetch([{ body: { items: [{ id: 1 }], total_items: 3 } }]))
+  await assert.rejects(lgl.listEntries(7, 'email_addresses'), /Incomplete read of \/constituents\/7\/email_addresses: got 1 of 3/)
+})
