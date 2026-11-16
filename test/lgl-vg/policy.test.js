@@ -54,3 +54,9 @@ test('hash is the sha256 of the text and sensitive to whitespace', () => {
   assert.equal(a.hash, createHash('sha256').update(text).digest('hex'))
   assert.notEqual(parsePolicy(text + '\n').hash, a.hash)
 })
+
+test('lgl-addressee takes if-default or never, and nothing else', () => {
+  assert.equal(parsePolicy(JSON.stringify({ settings: { 'lgl-addressee': 'never' } })).setting('lgl-addressee'), 'never')
+  assert.equal(parsePolicy(JSON.stringify({ settings: { 'lgl-addressee': 'if-default' } })).setting('lgl-addressee'), 'if-default')
+  assert.throws(() => parsePolicy(JSON.stringify({ settings: { 'lgl-addressee': 'always' } })), /unknown setting value/)
+})

@@ -258,6 +258,15 @@ test('--once full --snapshot with --write-vg exits 2 before any request', async 
   assert.deepEqual(h.calls, [])
 })
 
+test('--write-lgl without --write-vg is refused', async () => {
+  for (const kind of ['full', 'vg-check', 'lgl-check']) {
+    const h = harness({ lgl: false })
+    assert.equal(await run(['--once', kind, '--write-lgl'], h.deps), 2, kind)
+    assert.match(h.out.join('\n'), /--write-lgl requires --write-vg/)
+    assert.deepEqual(h.calls, [])
+  }
+})
+
 test('--once full --max-people must be a positive whole number', async () => {
   for (const v of ['0', '-1', '2.5', 'abc']) {
     const h = harness()
@@ -369,7 +378,7 @@ test('no command starts the service and SIGTERM stops it', async () => {
   assert.deepEqual(h.out.slice(0, 3), [
     'STARTUP VG signed in as service-account-vg-sync',
     'STARTUP LGL reached',
-    'STARTUP scheduler started write-vg=off nightly=07:00Z',
+    'STARTUP scheduler started write-vg=off write-lgl=off allow=none nightly=07:00Z',
   ])
   h.handlers.SIGTERM()
   assert.equal(await done, 0)

@@ -6,6 +6,7 @@ import { FIELDS } from './fields.js'
 const CASES = ['same', 'first-match', 'converged', 'lgl-changed', 'vg-changed', 'lgl-cleared', 'vg-cleared', 'both-changed', 'never-agreed']
 const ACTIONS = ['to-vg', 'to-lgl', 'hold', 'merge', 'toward-deceased', 'to-lgl-else-hold']
 const RECORD_ACTIONS = { 'lgl-missing': ['hold', 'unlink'], 'no-longer-donor': ['hold', 'unlink'] }
+const LGL_ADDRESSEE = ['if-default', 'never']
 
 function oneOf(what, value, allowed) {
   if (!allowed.includes(value)) throw new Error(`policy: unknown ${what} "${value}" (expected one of ${allowed.join(', ')})`)
@@ -32,6 +33,10 @@ export function parsePolicy(text) {
   for (const [kind, action] of Object.entries(records)) {
     oneOf('record kind', kind, Object.keys(RECORD_ACTIONS))
     oneOf(`record action for ${kind}`, action, RECORD_ACTIONS[kind])
+  }
+
+  if (settings['lgl-addressee'] !== undefined && !LGL_ADDRESSEE.includes(settings['lgl-addressee'])) {
+    throw new Error(`policy: unknown setting value "${settings['lgl-addressee']}" for lgl-addressee (expected one of ${LGL_ADDRESSEE.join(', ')})`)
   }
 
   return {

@@ -150,7 +150,8 @@ export async function startService({
   }
 
   const scheduler = createScheduler({ now, setTimer, clearTimer, fullPassUtc: config.fullPassUtc, runFull, stdout, runCheck })
-  stdout(`STARTUP scheduler started write-vg=${config.writeVg ? 'on' : 'off'} nightly=${config.fullPassUtc}Z`)
+  const allowText = (a) => (a === 'all' ? 'all' : a.size ? `${a.size} ids` : 'none')
+  stdout(`STARTUP scheduler started write-vg=${config.writeVg ? 'on' : 'off'} write-lgl=${config.writeLgl ? 'on' : 'off'} allow=${allowText(config.lglWriteAllow)} nightly=${config.fullPassUtc}Z`)
   scheduler.start()
 
   return {

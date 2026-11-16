@@ -10,7 +10,7 @@ const DAY = 86_400_000
 const config = {
   lgl: { membershipFundId: 5, paypalPaymentTypeId: 2 },
   circuitBreakerPeople: 50, maxConstituentDropPercent: 10, imageRevision: 'abc123',
-  writeVg: true, fullPassUtc: '07:00', outDir: 'out', decisionsKeepDays: 30, passTimeoutMinutes: 30, checkTimeoutMinutes: 5,
+  writeVg: true, writeLgl: false, lglWriteAllow: new Set(), fullPassUtc: '07:00', outDir: 'out', decisionsKeepDays: 30, passTimeoutMinutes: 30, checkTimeoutMinutes: 5,
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
@@ -78,7 +78,7 @@ test('startup prints the three markers in order', async () => {
   assert.deepEqual(s.out.slice(0, 3), [
     'STARTUP VG signed in as vg-sync',
     'STARTUP LGL reached',
-    'STARTUP scheduler started write-vg=on nightly=07:00Z',
+    'STARTUP scheduler started write-vg=on write-lgl=off allow=none nightly=07:00Z',
   ])
   await svc.stop()
 })
@@ -86,7 +86,7 @@ test('startup prints the three markers in order', async () => {
 test('startup says write-vg=off for a dry-run service', async () => {
   const s = setup()
   const svc = await startService({ ...s.deps, config: { ...config, writeVg: false, fullPassUtc: '06:30' } })
-  assert.equal(s.out[2], 'STARTUP scheduler started write-vg=off nightly=06:30Z')
+  assert.equal(s.out[2], 'STARTUP scheduler started write-vg=off write-lgl=off allow=none nightly=06:30Z')
   await svc.stop()
 })
 

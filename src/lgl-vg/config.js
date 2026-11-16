@@ -61,12 +61,32 @@ function toClock(env, name, fallback) {
   return s
 }
 
+// 'all', or a comma-separated list of constituent ids; unset or empty is none.
+function toAllowList(env, name) {
+  if (!present(env[name])) return new Set()
+  const s = String(env[name]).trim()
+  if (s === 'all') return 'all'
+  const ids = s.split(',').map((x) => x.trim())
+  const bad = ids.find((x) => !/^\d+$/.test(x))
+  if (bad !== undefined) throw new Error(`${name} must be "all" or a comma-separated list of constituent ids, got "${bad}"`)
+  return new Set(ids)
+}
+
+// Whether the sync may write to this LGL constituent (ids compare as strings).
+export function allowedForLgl(config, constituentId) {
+  return config.lglWriteAllow === 'all' || config.lglWriteAllow.has(String(constituentId))
+}
+
 export function loadConfig(env = process.env) {
   const missing = REQUIRED.filter((k) => !present(env[k]))
   if (missing.length) throw new Error(`Missing environment variables: ${missing.join(', ')}`)
 
   const horizon = present(env.CREATE_HORIZON_YEARS) ? String(env.CREATE_HORIZON_YEARS).trim() : '5'
   if (!/^\d+$/.test(horizon)) throw new Error(`CREATE_HORIZON_YEARS must be a whole number, got "${horizon}"`)
+
+  const writeVg = String(env.WRITE_VG ?? '').trim() === 'true'
+  const writeLgl = String(env.WRITE_LGL ?? '').trim() === 'true'
+  if (writeLgl && !writeVg) throw new Error('WRITE_LGL=true requires WRITE_VG=true')
 
   return {
     lgl: {
@@ -85,7 +105,9 @@ export function loadConfig(env = process.env) {
     circuitBreakerPeople: toCount(env, 'CIRCUIT_BREAKER_PEOPLE', 50),
     maxConstituentDropPercent: toCount(env, 'MAX_CONSTITUENT_DROP_PERCENT', 10),
     policyFile: present(env.POLICY_FILE) ? String(env.POLICY_FILE).trim() : 'policy.json',
-    writeVg: String(env.WRITE_VG ?? '').trim() === 'true',
+    writeVg,
+    writeLgl,
+    lglWriteAllow: toAllowList(env, 'LGL_WRITE_ALLOW'),
     fullPassUtc: toClock(env, 'FULL_PASS_UTC', '07:00'),
     outDir: present(env.OUT_DIR) ? String(env.OUT_DIR).trim() : 'out',
     decisionsKeepDays: toPositive(env, 'DECISIONS_KEEP_DAYS', 30),

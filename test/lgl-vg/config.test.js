@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadConfig } from '../../src/lgl-vg/config.js'
+import { loadConfig, allowedForLgl } from '../../src/lgl-vg/config.js'
 
 const full = {
   LGL_API_KEY: 'k', LGL_MEMBERSHIP_FUND_ID: '11', LGL_PAYPAL_PAYMENT_TYPE_ID: '22',
@@ -87,4 +87,24 @@ test('CHECK_TIMEOUT_MINUTES defaults to 5 and rejects 61', () => {
   assert.equal(loadConfig({ ...full, CHECK_TIMEOUT_MINUTES: '60' }).checkTimeoutMinutes, 60)
   assert.throws(() => loadConfig({ ...full, CHECK_TIMEOUT_MINUTES: '61' }), /CHECK_TIMEOUT_MINUTES/)
   assert.throws(() => loadConfig({ ...full, CHECK_TIMEOUT_MINUTES: '0' }), /CHECK_TIMEOUT_MINUTES/)
+})
+
+const base = full
+
+test('WRITE_LGL needs WRITE_VG', () => {
+  assert.throws(() => loadConfig({ ...base, WRITE_LGL: 'true' }), /WRITE_LGL=true requires WRITE_VG=true/)
+  assert.equal(loadConfig({ ...base, WRITE_VG: 'true', WRITE_LGL: 'true' }).writeLgl, true)
+  assert.equal(loadConfig(base).writeLgl, false)
+})
+
+test('LGL_WRITE_ALLOW: unset is none, all is all, a list is ids', () => {
+  assert.equal(allowedForLgl(loadConfig(base), '101'), false)
+  assert.equal(allowedForLgl(loadConfig({ ...base, LGL_WRITE_ALLOW: 'all' }), '101'), true)
+  const c = loadConfig({ ...base, LGL_WRITE_ALLOW: ' 101, 202 ' })
+  assert.equal(allowedForLgl(c, 101), true)
+  assert.equal(allowedForLgl(c, '303'), false)
+})
+
+test('LGL_WRITE_ALLOW refuses anything but ids or all', () => {
+  assert.throws(() => loadConfig({ ...base, LGL_WRITE_ALLOW: '101,abc' }), /LGL_WRITE_ALLOW/)
 })

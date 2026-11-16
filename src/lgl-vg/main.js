@@ -20,14 +20,14 @@ import { mergeLglChanges } from './check-plan.js'
 
 const USAGE = `Usage:
   node src/lgl-vg/main.js
-  node src/lgl-vg/main.js --once full [--write-vg] [--max-people <n>] [--out <dir>] [--snapshot <file>]
-  node src/lgl-vg/main.js --once vg-check [--write-vg] [--after <auditId>] [--out <dir>]
-  node src/lgl-vg/main.js --once lgl-check [--write-vg] [--since <ISO time>] [--out <dir>]
+  node src/lgl-vg/main.js --once full [--write-vg] [--write-lgl] [--max-people <n>] [--out <dir>] [--snapshot <file>]
+  node src/lgl-vg/main.js --once vg-check [--write-vg] [--write-lgl] [--after <auditId>] [--out <dir>]
+  node src/lgl-vg/main.js --once lgl-check [--write-vg] [--write-lgl] [--since <ISO time>] [--out <dir>]
   node src/lgl-vg/main.js report [--out <dir>] [--save-snapshot] [--snapshot <file>]
   node src/lgl-vg/main.js seed-import --file <import-run.json> [--write-vg]
   node src/lgl-vg/main.js setup [--acknowledge-privacy]
 With no command it runs as the service: a full pass at start and nightly at
-FULL_PASS_UTC, writing to VG only when WRITE_VG=true, until SIGTERM or SIGINT.
+FULL_PASS_UTC, writing to VG only when WRITE_VG=true (and to LGL only when WRITE_LGL=true as well), until SIGTERM or SIGINT.
 Any command also takes --env <file> (default .env). Variables already set in the
 environment are not overridden by the file.`
 
@@ -75,10 +75,11 @@ async function readSnapshot(read, path) {
 }
 
 function parseFullOptions(args) {
-  const opts = { out: 'out', snapshot: null, writeVg: false, maxPeople: null }
+  const opts = { out: 'out', snapshot: null, writeVg: false, writeLgl: false, maxPeople: null }
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === '--write-vg') opts.writeVg = true
+    else if (a === '--write-lgl') opts.writeLgl = true
     else if (a === '--out' || a === '--snapshot' || a === '--max-people') {
       const v = args[++i]
       if (v === undefined) throw new Error(`${a} needs a value`)
@@ -90,6 +91,7 @@ function parseFullOptions(args) {
       }
     } else throw new Error(`Unknown option ${a}`)
   }
+  if (opts.writeLgl && !opts.writeVg) throw new Error('--write-lgl requires --write-vg')
   if (opts.snapshot && opts.writeVg) {
     throw new Error('A snapshot cannot be used to write: it would write stale LGL values into VG. Drop --snapshot or --write-vg.')
   }
@@ -111,7 +113,7 @@ async function full(argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFil
     const vg = createVgClient({ ...config.vg, fetchImpl, now })
     const lgl = snapshot ? null : createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
     return await runFullPass({
-      config, policy, vg, lgl, snapshot, writeVg: opts.writeVg, maxPeople: opts.maxPeople,
+      config, policy, vg, lgl, snapshot, writeVg: opts.writeVg, writeLgl: opts.writeLgl, maxPeople: opts.maxPeople,
       now, writeLines: write, stdout, out: opts.out,
     })
   } catch (err) {
@@ -122,10 +124,11 @@ async function full(argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFil
 
 function parseCheckOptions(args, kind) {
   const cursorFlag = kind === 'vg-check' ? '--after' : '--since'
-  const opts = { out: 'out', writeVg: false, cursor: null }
+  const opts = { out: 'out', writeVg: false, writeLgl: false, cursor: null }
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === '--write-vg') opts.writeVg = true
+    else if (a === '--write-lgl') opts.writeLgl = true
     else if (a === '--out' || a === cursorFlag) {
       const v = args[++i]
       if (v === undefined) throw new Error(`${a} needs a value`)
@@ -139,6 +142,7 @@ function parseCheckOptions(args, kind) {
       }
     } else throw new Error(`Unknown option ${a}`)
   }
+  if (opts.writeLgl && !opts.writeVg) throw new Error('--write-lgl requires --write-vg')
   return opts
 }
 
@@ -199,7 +203,7 @@ async function check(kind, argv, { env, fetchImpl = fetch, sleep, now, stdout, w
       stdout(t)
     }
     const result = await runCheck({
-      kind, state, config, policy, vg, lgl, writeVg: opts.writeVg, now, writeLines: write, stdout: watch, out: opts.out,
+      kind, state, config, policy, vg, lgl, writeVg: opts.writeVg, writeLgl: opts.writeLgl, now, writeLines: write, stdout: watch, out: opts.out,
       lglAttempts: 5, quiet: false, ...extra,
     })
     if (result.outcome === 'ok') {
