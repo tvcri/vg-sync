@@ -30,13 +30,12 @@ function uncleanCase(vgC, agreedC) {
 
 export const fingerprint = (parts) => createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32)
 
-// VG's value in the form an LGL write sends it: an address's state as its two-letter code. VG's
-// state comes from a picker, so one that does not reduce to a code breaks an invariant: fail loud.
-function lglValueOf(field, vgValue, personId) {
+// VG's value in the form an LGL write sends it: an address's state as its two-letter code; null
+// when VG's state does not reduce to one (lglWrite decides what that means).
+function lglValueOf(field, vgValue) {
   if (field !== 'address') return vgValue
   const state = stateCode(vgValue.state)
-  if (!state) throw new Error(`VG person ${personId} address: state "${vgValue.state}" is not a two-letter state code`)
-  return { ...vgValue, state }
+  return state ? { ...vgValue, state } : null
 }
 
 // True when VG has emptied a phone slot LGL's read slot (clean or not) still holds. Clearing is
@@ -107,6 +106,14 @@ export function planLinked({
   // write, flapping, a PO box. Returns false, planning nothing, when the write would make no call.
   const lglWrite = (c, lgl, rows, { value, merge = false }) => {
     const { constituentId: key, field: f, case: kase } = rows[0].dec
+    if (value === null) {
+      // VG's state comes from a picker, so one that is not a code breaks an invariant: a write that
+      // would be sent fails the run; one that will not be sent is deferred with no calls.
+      const vg = rows[0].r.vg
+      if (lglSend(key)) throw new Error(`VG person ${rows[0].dec.personId} address: state "${vg.state}" is not a two-letter state code`)
+      for (const x of rows) decisions.push({ ...x.dec, outcome: 'deferred', note: 'vg state not a code', calls: [] })
+      return true
+    }
     const fpWrite = fingerprint([f, comparable(f, value)])
     const guard = (reason, fpOf, detailOf) => { for (const x of rows) hold(x.dec, { reason, fingerprint: fpOf(x), detail: detailOf(x) }) }
     const refusal = rows.map((x) => lglRefused.get(`${key}|${x.dec.personId}|${f}|${fpWrite}`))
@@ -229,7 +236,7 @@ export function planLinked({
           else if (f === 'deceased' && !r.vg.flag) policyHold('deceased-removed')
           else if (f === 'phones' && clearsPhoneSlot(lgl, r.vg)) policyHold('vg-cleared')
           else if (coupleToLgl) coupleRows.push({ dec, r })
-          else lglWrite(c, lgl, [{ dec, r }], { value: lglValueOf(f, r.vg, d.personId) })
+          else lglWrite(c, lgl, [{ dec, r }], { value: lglValueOf(f, r.vg) })
         }
         // toward-deceased copies a deceased mark LGL has and VG lacks to VG, and one VG has and LGL
         // lacks to LGL; two marks with different dates are held
@@ -254,7 +261,7 @@ export function planLinked({
         } else if (action === 'to-lgl-else-hold' || action === 'to-lgl') toLgl()
         else policyHold(kase)
       }
-      if (coupleRows.length === rows.length) lglWrite(c, lgl, coupleRows, { value: lglValueOf(f, coupleRows[0].r.vg, coupleRows[0].dec.personId) })
+      if (coupleRows.length === rows.length) lglWrite(c, lgl, coupleRows, { value: lglValueOf(f, coupleRows[0].r.vg) })
       else for (const { dec, r } of coupleRows) hold(dec, { reason: 'couple', fingerprint: r.fp, detail: { ...r.detail, case: dec.case } })
     }
 

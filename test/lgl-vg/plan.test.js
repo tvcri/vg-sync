@@ -452,7 +452,20 @@ test('an address written to LGL carries a two-letter state; a VG state that is n
   const p = plan({ constituents: [c], persons: [per({ detail: { state: 'Rhode Island', unit: 'Apt 2' } })], ...on })
   assert.deepEqual(p.lglWrites[0].value, { street: '12 Elm St', unit: 'Apt 2', city: 'Springfield', state: 'RI', zip: '99999' })
   assert.match(decisionsFor(p, 'address')[0].calls[0], /"state":"RI"/)
-  assert.throws(() => plan({ constituents: [c], persons: [per({ detail: { state: 'Atlantis' } })] }), /person 7.*address.*Atlantis/)
+  assert.throws(() => plan({ constituents: [c], persons: [per({ detail: { state: 'Atlantis' } })], ...on }), /person 7.*address.*Atlantis/)
+})
+
+test('an unconvertible VG state is deferred with a note when the write is not sent', () => {
+  const c = con({ street_addresses: [{ id: 12, street: '40 Oak Ave', city: 'Springfield', state: 'RI', zip5: '99999', is_preferred: true }] })
+  const persons = [per({ detail: { state: 'Atlantis' } })]
+  for (const lgl of [{}, { writeLgl: true, lglSend: () => false }]) {
+    const p = plan({ constituents: [c], persons, ...lgl })
+    const [d] = decisionsFor(p, 'address')
+    assert.deepEqual([d.outcome, d.note, d.calls], ['deferred', 'vg state not a code', []])
+    assert.deepEqual(p.lglWrites, [])
+    assert.equal(p.counts.deferred, 1)
+    assert.equal(p.counts.peopleChanged, 0)
+  }
 })
 
 test('toward-deceased with VG deceased and LGL not plans an LGL write of the mark', () => {
