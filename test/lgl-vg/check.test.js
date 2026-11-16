@@ -65,10 +65,21 @@ function fakes({
     createSyncHolds: rec('createSyncHolds', []),
     patchSyncHolds: rec('patchSyncHolds', 1),
     apiState: rec('apiState', { currentState: 'available', since: '2026-11-15T00:00:00.000Z', dependencies: { db: true, oidc: true } }),
+    getSyncLog: rec('getSyncLog', []),
+    appendSyncLog: rec('appendSyncLog', (rows) => rows.length),
     ...vgOverrides,
   }
-  // GET methods only: a check never writes to LGL
+  // LGL writes are sent only with writeLgl, to allowed constituents
   const lgl = {
+    getConstituentFull: rec('getConstituentFull', (id) => {
+      const r = lglRecords[String(id)]
+      if (r === 404 || !r) throw notFound()
+      return structuredClone(r)
+    }),
+    addEntry: rec('addEntry', (id, kind, body) => ({ id: 900, not_current: false, ...body })),
+    patchEntry: rec('patchEntry', (kind, entryId, body) => ({ ...body })),
+    patchConstituent: rec('patchConstituent', (id, body) => ({ ...body })),
+    listEntries: rec('listEntries', []),
     getConstituent: rec('getConstituent', (id) => {
       const r = lglRecords[String(id)]
       if (r === 404) throw notFound()
@@ -92,6 +103,7 @@ function fakes({
 }
 
 const WRITES = ['startRun', 'patchPerson', 'putSyncFields', 'putDonor', 'createSyncHolds', 'patchSyncHolds', 'finishRun']
+const LGL_WRITES = ['addEntry', 'patchEntry', 'patchConstituent', 'appendSyncLog']
 const feedOf = (...personIds) => [{ lastAuditId: 12, more: false, persons: personIds.map((id) => ({ personId: String(id), changes: [] })) }]
 const lines = (file) => file.text.trim().split('\n').map((l) => JSON.parse(l))
 
@@ -144,7 +156,7 @@ test('a vg edit plans to-lgl as deferred and writes nothing to LGL', async () =>
   const ds = lines(f.files[0])
   assert.ok(ds.some((d) => d.outcome === 'deferred' && d.field === 'firstName'))
   assert.ok(ds.every((d) => d.check === 'vg-check' && d.at === '2026-11-15T10:00:00.000Z'))
-  assert.equal(f.out.at(-1), 'CHECK OK vg-check write-vg people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0')
+  assert.equal(f.out.at(-1), 'CHECK OK vg-check write-vg people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=0 lgl-stale=0 lgl-refused=0')
   assert.ok(f.out.some((l) => l.startsWith('{')), 'counts block when not quiet')
   assert.equal(a.state.vgCursor, 12)
 })
@@ -153,7 +165,7 @@ test('a quiet check prints only the CHECK OK line', async () => {
   const c = con(101)
   const f = fakes({ persons: [per(7, 101, { firstName: 'Janet' })], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: c } })
   await runCheck(f.args({ quiet: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } }))
-  assert.deepEqual(f.out, ['CHECK OK vg-check dry-run people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0'])
+  assert.deepEqual(f.out, ['CHECK OK vg-check dry-run people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=0 lgl-stale=0 lgl-refused=0'])
   for (const n of WRITES) assert.ok(!f.names().includes(n), n)
 })
 
@@ -258,7 +270,7 @@ test('an lgl check links a new donor who matches a VG person', async () => {
   assert.deepEqual(f.calls.find((x) => x[0] === 'putDonor').slice(1), ['8', { lglConstituentId: '201', lastGiftDate: '2026-11-14' }])
   const fin = f.calls.find((x) => x[0] === 'finishRun')[2]
   assert.deepEqual([fin.lglCursor, fin.vgCursor, fin.counts.breakerPeople], ['2026-11-15T09:30:00Z', 5, 1])
-  assert.equal(f.out.at(-1), 'CHECK OK lgl-check write-vg people=1 writes=0 deferred=0 links=1 creates=0 holdsOpened=0 holdsClosed=0')
+  assert.equal(f.out.at(-1), 'CHECK OK lgl-check write-vg people=1 writes=0 deferred=0 links=1 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=0 lgl-stale=0 lgl-refused=0')
   assert.ok(lines(f.files[0]).every((d) => d.check === 'lgl-check'))
   assert.equal(a.state.lglCursor, '2026-11-15T09:30:00Z')
   assert.equal(a.state.cache.constituents.get('201'), c)
@@ -337,7 +349,7 @@ test('the breaker counts ok check runs of the last 24 hours and trips without wr
   const d = setup()
   const b = d.args({ state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } })
   assert.equal((await runCheck(b)).outcome, 'ok')
-  assert.match(d.out.at(-1), /^CHECK OK vg-check dry-run people=1 .* breaker=would-trip$/)
+  assert.match(d.out.at(-1), /^CHECK OK vg-check dry-run people=1 .* breaker=would-trip lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
   assert.equal(b.state.vgCursor, 12)
 })
 
@@ -357,7 +369,7 @@ test('a breaker count that reaches the read limit trips it, fail safe', async ()
 
   const d = setup()
   assert.equal((await runCheck(d.args({ state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } }))).outcome, 'ok')
-  assert.match(d.out.at(-1), /^CHECK OK vg-check dry-run people=1 .* breaker=would-trip$/)
+  assert.match(d.out.at(-1), /^CHECK OK vg-check dry-run people=1 .* breaker=would-trip lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
 })
 
 test('a feed page that says more but does not advance fails the vg check', async () => {
@@ -487,4 +499,121 @@ test('a live run blocks a write check', async () => {
   assert.match(r.error, /another sync run \(id 3, full\)/)
   assert.ok(!f.names().includes('startRun'))
   assert.equal(a.state.vgCursor, 5)
+})
+
+// Step 7: checks write to LGL. VG changed person 7's email since the agreed value.
+const allowAll = { ...config, lglWriteAllow: 'all' }
+const newEmail = (personId, cid) => ({ ...per(personId, cid), email: 'jane.new@example.org' })
+
+test('vg-check: a vg-changed email is written to LGL', async () => {
+  const c = con(101)
+  const f = fakes({ persons: [newEmail(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: c } })
+  const a = f.args({ config: allowAll, writeVg: true, writeLgl: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } })
+  const r = await runCheck(a)
+  assert.equal(r.outcome, 'ok', r.error)
+  assert.equal(f.calls.filter((x) => x[0] === 'getSyncLog').length, 1)
+  assert.deepEqual(f.calls.find((x) => x[0] === 'startRun')[1].switches, { writeVg: true, writeLgl: true })
+  // one attempt per LGL request inside a check
+  assert.deepEqual(f.calls.find((x) => x[0] === 'getConstituentFull').slice(1), ['101', { attempts: 1 }])
+  const add = f.calls.find((x) => x[0] === 'addEntry')
+  assert.deepEqual([String(add[1]), add[3].address, add[4]], ['101', 'jane.new@example.org', { attempts: 1 }])
+  const retire = f.calls.find((x) => x[0] === 'patchEntry')
+  assert.deepEqual([String(retire[2]), retire[3]], ['1011', { not_current: true }])
+  assert.ok(f.names().includes('appendSyncLog'))
+  const fin = f.calls.find((x) => x[0] === 'finishRun')[2]
+  assert.deepEqual(fin.counts.apply.lgl, { written: 1, stale: 0, refused: 0 })
+  assert.deepEqual([fin.counts.peopleChanged, fin.counts.breakerPeople], [1, 1])
+  assert.equal(f.out.at(-1), 'CHECK OK vg-check write-vg people=1 writes=0 deferred=0 links=0 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=1 lgl-stale=0 lgl-refused=0')
+  assert.ok(lines(f.files[0]).some((d) => d.outcome === 'write-lgl' && d.field === 'email'))
+})
+
+test('vg-check: dry, the LGL write is deferred and its calls are in the decisions file', async () => {
+  const c = con(101)
+  const f = fakes({ persons: [newEmail(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: c } })
+  const r = await runCheck(f.args({ config: allowAll, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } }))
+  assert.equal(r.outcome, 'ok', r.error)
+  for (const n of [...WRITES, ...LGL_WRITES, 'getSyncLog', 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  const d = lines(f.files[0]).find((x) => x.field === 'email')
+  assert.deepEqual([d.outcome, d.note], ['deferred', 'write-lgl off'])
+  assert.ok(d.calls.length >= 1)
+  assert.equal(f.out.at(-1), 'CHECK OK vg-check dry-run people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=0 lgl-stale=0 lgl-refused=0')
+})
+
+test('lgl-check: the sync\'s own write comes back as same and writes nothing', async () => {
+  // After an LGL write: the memory holds VG's value as agreed, with the entry written, and LGL's
+  // fresh record (its updated_at moved by the write) holds that same value.
+  const before = con(101, { updated_at: '2026-11-15T08:00:00Z' })
+  const after = con(101, {
+    updated_at: '2026-11-15T09:30:00Z',
+    email_addresses: [{ id: 900, address: 'jane.new@example.org', is_preferred: true, not_current: false }],
+  })
+  const memory = agreedAt(after, 7).map((m) => (m.field === 'email' ? { ...m, lglEntryId: '900' } : m))
+  assert.equal(memory.find((m) => m.field === 'email').value, 'jane.new@example.org')
+  const f = fakes({ persons: [newEmail(7, 101)], memory, since: { constituents: [after], gifts: [] } })
+  const a = f.args({
+    kind: 'lgl-check', config: allowAll, writeVg: true, writeLgl: true,
+    state: { cache: cacheOf([before]), lglCursor: '2026-11-15T09:00:00.000Z', vgCursor: 5 },
+  })
+  const r = await runCheck(a)
+  assert.deepEqual(r, { outcome: 'ok', final: false, breaker: false, rateLimited: false, foundChange: false, error: null })
+  for (const n of [...WRITES, ...LGL_WRITES, 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  assert.deepEqual([f.out, f.files], [[], []])
+  assert.equal(a.state.lglCursor, '2026-11-15T09:30:00Z')
+})
+
+test('a check planned from the cache (more than 20 touched) skips a field LGL changed since', async () => {
+  const cs = Array.from({ length: 21 }, (_, i) => con(101 + i))
+  const persons = cs.map((c, i) => (i === 0 ? newEmail(7, c.id) : per(7 + i, c.id)))
+  // LGL's email for 101 changed after the cache was filled: the fresh read before the write sees it
+  const moved = { ...cs[0], email_addresses: [{ id: 1011, address: 'jane.moved@example.org', is_preferred: true }] }
+  const f = fakes({
+    persons, memory: cs.flatMap((c, i) => agreedAt(c, 7 + i)), feed: feedOf(...persons.map((p) => p.personId)),
+    lglRecords: { 101: moved },
+  })
+  const a = f.args({ config: allowAll, writeVg: true, writeLgl: true, state: { cache: cacheOf(cs), lglCursor: null, vgCursor: 5 } })
+  const r = await runCheck(a)
+  assert.equal(r.outcome, 'ok', r.error)
+  assert.ok(!f.names().includes('getConstituent'), 'the plan is made from the cache')
+  assert.deepEqual(f.calls.filter((x) => x[0] === 'getConstituentFull').map((x) => x[1]), ['101'])
+  for (const n of LGL_WRITES) assert.ok(!f.names().includes(n), n)
+  assert.ok(!(f.calls.find((x) => x[0] === 'putSyncFields')?.[1] ?? []).some((m) => m.field === 'email'), 'no memory for the stale field')
+  assert.match(f.out.at(-1), /^CHECK OK vg-check write-vg people=1 .* lgl-writes=0 lgl-stale=1 lgl-refused=0$/)
+  assert.equal(a.state.vgCursor, 12)
+})
+
+test('an LGL 429 while writing keeps source lgl: the check is rate-limited, with no VG API note', async () => {
+  const c = con(101)
+  const f = fakes({
+    persons: [newEmail(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: c },
+    lglOverrides: { addEntry: async () => { throw Object.assign(new Error('LGL POST /constituents/101/email_addresses → 429: slow down'), { status: 429 }) } },
+  })
+  const a = f.args({ config: allowAll, writeVg: true, writeLgl: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } })
+  const r = await runCheck(a)
+  assert.equal(r.outcome, 'failed')
+  assert.equal(r.rateLimited, true)
+  assert.equal(r.error, 'LGL POST /constituents/101/email_addresses → 429: slow down')
+  assert.ok(!f.names().includes('apiState'))
+  assert.equal(f.calls.find((x) => x[0] === 'finishRun')[2].result, 'failed')
+  assert.equal(a.state.vgCursor, 5)
+})
+
+test('lglPaused fails a write check from the cache that would send to LGL, before any write', async () => {
+  const cs = Array.from({ length: 21 }, (_, i) => con(101 + i))
+  const persons = cs.map((c, i) => (i === 0 ? newEmail(7, c.id) : per(7 + i, c.id)))
+  const f = fakes({ persons, memory: cs.flatMap((c, i) => agreedAt(c, 7 + i)), feed: feedOf(...persons.map((p) => p.personId)), lglRecords: { 101: cs[0] } })
+  const a = f.args({ config: allowAll, writeVg: true, writeLgl: true, lglPaused: true, state: { cache: cacheOf(cs), lglCursor: null, vgCursor: 5 } })
+  const r = await runCheck(a)
+  assert.deepEqual([r.outcome, r.error], ['failed', 'LGL rate-limited'])
+  for (const n of [...WRITES, ...LGL_WRITES, 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  assert.equal(a.state.vgCursor, 5)
+})
+
+test('a check: 5000 LGL log rows fails safe, nothing written', async () => {
+  const c = con(101)
+  const rows = Array.from({ length: 5000 }, (_, i) => ({ runId: String(i), personId: '7', field: 'email', outcome: 'written' }))
+  const f = fakes({ persons: [newEmail(7, 101)], memory: agreedAt(c, 7), feed: feedOf(7), lglRecords: { 101: c }, vgOverrides: { getSyncLog: async () => rows } })
+  const r = await runCheck(f.args({ config: allowAll, writeVg: true, writeLgl: true, state: { cache: cacheOf([c]), lglCursor: null, vgCursor: 5 } }))
+  assert.equal(r.outcome, 'failed')
+  assert.match(r.error, /5000 rows.*cannot count/)
+  for (const n of [...WRITES, ...LGL_WRITES]) assert.ok(!f.names().includes(n), n)
 })

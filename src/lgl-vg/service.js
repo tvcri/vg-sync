@@ -106,7 +106,7 @@ export async function startService({
     let result = { outcome: 'failed', retryable: true }
     try {
       await runFullPass({
-        config, policy, vg, lgl, snapshot: null, writeVg: config.writeVg, maxPeople: null, vgCursorFrom: state.vgCursor,
+        config, policy, vg, lgl, snapshot: null, writeVg: config.writeVg, writeLgl: config.writeLgl, maxPeople: null, vgCursorFrom: state.vgCursor,
         now, writeLines, stdout, out: config.outDir, signal: controller.signal, quiet: true,
         onResult: (r) => { result = r },
       })
@@ -140,7 +140,7 @@ export async function startService({
     const timer = setTimer(() => controller.abort('timeout'), config.checkTimeoutMinutes * 60_000)
     try {
       return await runCheckOnce({
-        kind, state, config, policy, vg, lgl, writeVg: config.writeVg, now, writeLines, stdout,
+        kind, state, config, policy, vg, lgl, writeVg: config.writeVg, writeLgl: config.writeLgl, now, writeLines, stdout,
         out: config.outDir, signal: controller.signal, lglAttempts: 1, lglPaused, quiet: true,
       })
     } finally {

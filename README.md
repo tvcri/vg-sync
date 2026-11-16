@@ -37,7 +37,7 @@ signs in to VG, reaches LGL, and prints three start-up lines:
 ```
 STARTUP VG signed in as <username>
 STARTUP LGL reached
-STARTUP scheduler started write-vg=<on|off> nightly=<HH:MM>Z
+STARTUP scheduler started write-vg=<on|off> write-lgl=<on|off> allow=<all|<n> ids|none> nightly=<HH:MM>Z
 ```
 
 A sign-in or LGL failure is tried three times, 20 seconds apart (a refused
@@ -51,7 +51,8 @@ it saying the constituent-drop check is skipped. A
 pass running longer than `PASS_TIMEOUT_MINUTES` (default 30, at most 1440) is
 stopped and fails. A change check (step 6) running longer than
 `CHECK_TIMEOUT_MINUTES` (default 5, at most 60) is stopped and fails. It writes to VG only when `WRITE_VG=true`; otherwise every pass is a
-dry run. Decisions files go to `OUT_DIR` (default `out`); those older than
+dry run. It writes to LGL only when `WRITE_LGL=true` as well, and only to the
+constituents in `LGL_WRITE_ALLOW` (see "Writing to LGL"). Decisions files go to `OUT_DIR` (default `out`); those older than
 `DECISIONS_KEEP_DAYS` (default 30) are deleted after each pass.
 
 `SIGTERM` or `SIGINT` prints `STOPPING`, stops the running pass between
@@ -97,9 +98,11 @@ writes.
 It is a dry run unless you add `--write-vg`. A dry run makes only read requests
 to VG and none that change LGL. With `--write-vg` it records a run row in VG,
 writes the planned changes, then the sync memory and holds, and closes the run
-row. Nothing is ever written to LGL.
+row. Nothing is written to LGL without `--write-lgl` (see "Writing to LGL").
 
 - `npm run full -- --write-vg` writes to VG.
+- `--write-lgl` (with `--write-vg`) also sends the planned LGL writes to the
+  constituents in `LGL_WRITE_ALLOW`.
 - `--max-people <n>` raises the circuit breaker for this run. A write run
   refuses to continue when the plan changes more people than
   `CIRCUIT_BREAKER_PEOPLE` (default 50), or than `n` when given. A dry run
@@ -125,13 +128,13 @@ run would do to the hold table (opened, seen, reopened, closed, left dismissed).
 ## Running a change check by hand
 
 The service runs two light checks between the nightly passes; each can also be
-run once by hand, dry unless `--write-vg`:
+run once by hand, dry unless `--write-vg` (and, for LGL, `--write-lgl`):
 
-- `node src/lgl-vg/main.js --once vg-check [--write-vg] [--after <auditId>] [--out <dir>]`
+- `node src/lgl-vg/main.js --once vg-check [--write-vg] [--write-lgl] [--after <auditId>] [--out <dir>]`
   decides the people VG changed since the cursor. The cursor is `--after`, else
   the newest run row's `vgCursor`; with neither it exits 2 and says to give
   `--after`. It reads each touched constituent and its gifts from LGL.
-- `node src/lgl-vg/main.js --once lgl-check [--write-vg] [--since <ISO time>] [--out <dir>]`
+- `node src/lgl-vg/main.js --once lgl-check [--write-vg] [--write-lgl] [--since <ISO time>] [--out <dir>]`
   decides the constituents and gifts LGL changed since the cursor (`--since`,
   else the newest run row's `lglCursor`). It first pulls every constituent and
   gift, as a full pass does, so it takes about as long as one.
@@ -141,6 +144,52 @@ Both print the counts and a `CHECK OK <kind> <dry-run|write-vg> ...` line (or
 exit 0, or print `CHECK FAILED <kind> <message>` and exit 1 at once (no
 15-minute rule). `--snapshot` and `--max-people` are not accepted; the check
 breaker uses `CIRCUIT_BREAKER_PEOPLE`.
+
+## Writing to LGL
+
+Writes to LGL are off by default, and need both switches and an allow-list:
+
+- `--write-lgl` on `--once full`, `--once vg-check` and `--once lgl-check`, or
+  `WRITE_LGL=true` for the service. `--write-lgl` requires `--write-vg`, and
+  `WRITE_LGL=true` requires `WRITE_VG=true`: the log, the memory, the holds and
+  the run row are all VG writes.
+- `LGL_WRITE_ALLOW`: a comma-separated list of LGL constituent ids, or `all`.
+  Empty or unset means none: with writing on and no allow-list, nothing is
+  written to LGL.
+
+A planned LGL write that is not sent is counted as `deferred` and shown, with
+the calls it would make, in the decisions file: note `write-lgl off` without
+the switch, `not-allowed` for a constituent not on the list. Every call sent is
+logged in VG's `sync_log`. A person with an LGL write that will be sent counts
+toward the circuit breakers; a deferred one does not. The run row's `switches`
+record `writeLgl`, and its counts the LGL writes, stale fields and refusals.
+
+`PASS OK` and `CHECK OK` end with `lgl-writes=<n> lgl-stale=<n>
+lgl-refused=<n>`, after the keys above. On a dry run `lgl-writes` is the
+number of writes that would be sent, and the other two are 0.
+
+A field written to LGL by more than three runs in thirty days is held
+(`flapping`). The count is read from `sync_log`; if that read reaches its
+limit of 5000 rows the run fails without writing, since it cannot count.
+
+### Go-live order
+
+Each stage that writes to production LGL needs the engineer's go-ahead.
+
+1. The service's deployment (VM, compose, alerts), and `seed-import
+   --write-vg` into production VG.
+2. The service starts with `WRITE_LGL=true` and an empty `LGL_WRITE_ALLOW`:
+   VG writes on, LGL writes printed and counted. A full LGL snapshot is
+   saved. The first passes' printed calls are reviewed.
+3. A handful of real donors on the allow-list, picked to cover the risky
+   shapes: a never-agreed address, a PO box, a hand-written addressee, a name
+   change, a couple, a phone and a cell. Each is checked by hand in LGL
+   afterwards, including LGL's address verification rewrite.
+4. The backlog, by hand: a dry `--once full` with the allow-list at `all`
+   prints every call; once reviewed, `--once full --write-vg --write-lgl
+   --max-people <n>` with `n` from that dry run. Then `LGL_WRITE_ALLOW=all`
+   in the service's `.env`. The breaker stays the same for every unattended
+   run; the one big pass is attended.
 
 ## Loading the import's decisions (once, before go-live)
 

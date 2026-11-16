@@ -19,6 +19,31 @@ const COPIES_TO_VG = new Set(['to-vg', 'merge', 'toward-deceased'])
 const COUPLE_WRITES_LGL = new Set(['vg-changed', 'both-changed'])
 // Guards, Flapping: more LGL writes than this for one person and field in thirty days holds the field.
 const FLAP_LIMIT = 3
+const FLAP_DAYS = 30
+// The most sync_log rows one read returns; a read that fills it may have missed some.
+export const SYNC_LOG_LIMIT = 5000
+
+// The sync_log read for the flapping guard: written rows since thirty days before nowMs.
+export const lglWriteLogQuery = (nowMs) => ({
+  outcome: 'written', since: new Date(nowMs - FLAP_DAYS * 86_400_000).toISOString(), limit: SYNC_LOG_LIMIT,
+})
+
+// planLinked's lglWriteCounts from those rows: "personId|field" -> the number of distinct runs that
+// wrote it (one write logs a row per call). A read that fills the limit cannot be counted: it throws
+// a final error (a retry reads the same log), and the run writes nothing.
+export function countLglWrites(rows) {
+  if (rows.length >= SYNC_LOG_LIMIT) {
+    throw Object.assign(new Error(`the LGL write log of ${FLAP_DAYS} days has ${SYNC_LOG_LIMIT} rows or more (the read limit), so the flapping guard cannot count it; nothing was written`), { final: true })
+  }
+  const runs = new Map()
+  for (const r of rows) {
+    if (r.personId == null || r.field == null) continue
+    const k = `${r.personId}|${r.field}`
+    if (!runs.has(k)) runs.set(k, new Set())
+    runs.get(k).add(String(r.runId))
+  }
+  return new Map([...runs].map(([k, s]) => [k, s.size]))
+}
 const phoneKey = (n) => comparable('phones', { phone: n })
 
 // The case for a field whose LGL value failed cleaning. That value is never equal to a clean

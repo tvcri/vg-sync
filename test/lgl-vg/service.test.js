@@ -338,3 +338,47 @@ test('the cache from the full pass reaches the lgl check', async () => {
   assert.equal(s.out.some((l) => l.startsWith('CHECK FAILED')), false, s.out.join('\n'))
   await svc.stop()
 })
+
+test('service: WRITE_LGL reaches both checks and the full pass', async () => {
+  // One linked pair, agreed nowhere yet: every run records it, so each opens a run row.
+  const jane = {
+    id: 11, first_name: 'Jane', last_name: 'Doe', nick_name: null, suffix: null, is_deceased: false, deceased_date: null, is_org: false,
+    email_addresses: [{ id: 111, address: 'jane@example.org', is_preferred: true }], street_addresses: [], phone_numbers: [],
+    updated_at: '2026-11-10T00:00:00Z',
+  }
+  const person = {
+    personId: '7', deceased: false, email: 'jane@example.org', phone: { phone: null, cell: null },
+    donor: { lglConstituentId: '11', lastGiftDate: '2026-01-05' },
+    detail: { firstName: 'Jane', lastName: 'Doe', suffix: null, nickname: null, street: null, unit: null, city: null, state: null, zip: null, deceasedDate: null },
+  }
+  const gift = { id: 5, constituent_id: 11, received_date: '2026-01-05', gift_type_id: 1, fund_id: 9, payment_type_id: 1 }
+  const s = checkSetup({ pullConstituents: async () => [jane] })
+  const starts = []
+  const logReads = []
+  let feed = 0
+  Object.assign(s.deps.vg, {
+    listPersons: async () => [person],
+    startRun: async (r) => { starts.push([r.kind, r.switches]); return { runId: starts.length } },
+    getSyncLog: async (q) => { logReads.push(q.outcome); return [] },
+    getLinkedPersons: async () => [person],
+    putSyncFields: async (rows) => rows.length,
+    createSyncHolds: async () => [],
+    patchSyncHolds: async () => 0,
+    getChanges: async () => (++feed === 2 ? { lastAuditId: 8, more: false, persons: [{ personId: '7', changes: [] }] } : { lastAuditId: 8, more: false, persons: [] }),
+  })
+  Object.assign(s.deps.lgl, {
+    pullGifts: async () => [gift],
+    getConstituent: async () => ({ ...jane, updated_at: '2026-11-12T10:01:00Z' }),
+    constituentGifts: async () => [gift],
+    constituentsSince: async () => [{ ...jane, updated_at: '2026-11-12T10:02:00Z' }],
+    giftsSince: async () => [],
+  })
+  const svc = await startService({ ...s.deps, config: { ...config, writeLgl: true, lglWriteAllow: 'all' } })
+  await settle()
+  for (let i = 0; i < 6; i++) await tick(s)
+  await svc.stop()
+  const kinds = new Set(starts.map(([k]) => k))
+  assert.deepEqual([...kinds].sort(), ['full', 'lgl-check', 'vg-check'], s.out.join('\n'))
+  for (const [kind, switches] of starts) assert.deepEqual(switches, { writeVg: true, writeLgl: true }, kind)
+  assert.ok(logReads.length >= 3, 'each run read the LGL write log')
+})

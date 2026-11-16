@@ -1,6 +1,7 @@
 // A change check: the VG check (people changed in VG since the VG cursor) or the LGL check
 // (constituents and gifts changed in LGL since the LGL cursor). Decides the touched constituents
-// as a full pass would, and (only with writeVg) applies the plan. Never calls an LGL write.
+// as a full pass would, and (only with writeVg) applies the plan. LGL writes are sent only with
+// writeLgl (which needs writeVg), and only to constituents on the allow-list.
 // The state's cursors and LGL cache change only when the check succeeds: a failed or stopped
 // check leaves them, and the next check covers the same ground. A failure is returned, not
 // printed: the caller prints CHECK FAILED or PASS FAILED.
@@ -8,6 +9,8 @@ import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
 import { createStopper } from './abort.js'
 import { mergeLglChanges, lglCursorAfter, vgTouched, planCheck, foundChange } from './check-plan.js'
+import { lglWriteLogQuery, countLglWrites } from './plan.js'
+import { allowedForLgl } from './config.js'
 
 const TWO_MINUTES = 2 * 60 * 1000
 const DAY = 24 * 60 * 60 * 1000
@@ -29,11 +32,16 @@ export function lglCheckWindow(cursor) {
 const isTokenError = (err) => /^Keycloak token|openid-connect\/token/.test(String(err?.message))
 const is4xx = (err) => Number.isInteger(err?.status) && err.status >= 400 && err.status < 500
 
-// Marks a request's failure with the system it came from; a stop is left as it is.
+// Marks a request's failure with the system it came from; a stop is left as it is. A mark already
+// made stays: an LGL failure inside a VG-marked step (the apply) is still LGL's.
 const from = (source, promise) => promise.catch((err) => {
   if (err && typeof err === 'object' && !err.stop) err.source ??= source
   throw err
 })
+
+// The client with every call's failure marked as the source's.
+const marked = (source, client) => Object.fromEntries(Object.entries(client).map(([k, v]) =>
+  [k, typeof v === 'function' ? (...args) => from(source, (async () => v(...args))()) : v]))
 
 // "(VG API unavailable since <time>; db down)", from GET /op/state; one try, never fails the caller.
 async function apiStateNote(vg) {
@@ -47,7 +55,7 @@ async function apiStateNote(vg) {
 }
 
 export async function runCheck({
-  kind, state, config, policy, vg, lgl, writeVg = false, now, writeLines, stdout, out,
+  kind, state, config, policy, vg, lgl, writeVg = false, writeLgl = false, now, writeLines, stdout, out,
   signal = null, lglAttempts = 1, lglPaused = false, quiet = false, maxLglReads = 20, fetchGifts = null,
 }) {
   const mode = writeVg ? 'write-vg' : 'dry-run'
@@ -152,7 +160,13 @@ export async function runCheck({
     checkStop()
     const holds = await fromVg(vg.getSyncHolds(['open', 'dismissed']))
     checkStop()
-    const plan = planCheck({ touched, cache, persons, memory, holds, policy, config, today: at.slice(0, 10) })
+    // The flapping guard's count, only when LGL writes can be sent.
+    const lglWriteCounts = writeLgl ? countLglWrites(await fromVg(vg.getSyncLog(lglWriteLogQuery(now())))) : new Map()
+    checkStop()
+    const lglSend = (id) => writeLgl && allowedForLgl(config, id)
+    const plan = planCheck({
+      touched, cache, persons, memory, holds, policy, config, today: at.slice(0, 10), lglSend, writeLgl, lglWriteCounts,
+    })
     found = foundChange(plan)
     if (!found) {
       commit()
@@ -187,6 +201,8 @@ export async function runCheck({
     // 5. Apply, through the same run guard as a full pass.
     let applied = null
     if (writeVg) {
+      // Sending to LGL reads it first; while LGL is rate-limited, wait as an LGL read would.
+      if (lglPaused && plan.lglWrites.some((w) => w.send)) throw new Error('LGL rate-limited')
       const t = now()
       const live = (await fromVg(vg.recentRuns())).find((r) => {
         if (r.result !== 'running') return false
@@ -196,11 +212,13 @@ export async function runCheck({
       if (live) throw new Error(`another sync run (id ${live.runId}, ${live.kind}) started at ${live.startedAt} is still running; nothing was written`)
       checkStop()
       const run = await from('vg', vg.startRun({
-        kind, switches: { writeVg: true, writeLgl: false }, imageRevision: config.imageRevision, policyHash: policy.hash,
+        kind, switches: { writeVg: true, writeLgl }, imageRevision: config.imageRevision, policyHash: policy.hash,
       }))
       runId = run.runId
+      // LGL's failures keep their source, so a 429 puts the LGL check off (rateLimited).
       applied = await from('vg', applyPlan(plan, {
         vg, existingHolds: plan.existingHolds, replan: plan.replan, log: (d) => logged.push(d), signal,
+        lgl: marked('lgl', lgl), runId, policy, lglAttempts,
       }))
       if (applied.stopped) throw stopError()
       await from('vg', vg.finishRun(runId, {
@@ -225,6 +243,10 @@ export async function runCheck({
       : [`writes=${planDecisions.filter((d) => d.outcome === 'write-vg').length}`, `deferred=${plan.counts.deferred}`,
         `links=${uc.link + uc.follow + uc.finish}`, `creates=${uc.create}`,
         `holdsOpened=${holdPreview.opened}`, `holdsClosed=${holdPreview.closed}`, ...(trips ? ['breaker=would-trip'] : [])]
+    // LGL's keys follow the others. Dry: the writes that would be sent.
+    parts.push(...(writeVg
+      ? [`lgl-writes=${a.lgl.written}`, `lgl-stale=${a.lgl.stale}`, `lgl-refused=${a.lgl.refused}`]
+      : [`lgl-writes=${plan.counts.lglWritesPlanned}`, 'lgl-stale=0', 'lgl-refused=0']))
     stdout(`CHECK OK ${kind} ${mode} people=${plan.counts.peopleChanged} ${parts.join(' ')}`)
     return { outcome: 'ok', final: false, breaker: false, rateLimited: false, foundChange: true, error: null }
   } catch (err) {

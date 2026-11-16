@@ -1,5 +1,6 @@
-// Command line for the LGL <-> VG service (no command: the scheduler; writes to VG only with WRITE_VG=true),
-// one full pass or one change check by hand (--once full, vg-check, lgl-check; dry unless --write-vg), the report (writes nothing to LGL or VG), the
+// Command line for the LGL <-> VG service (no command: the scheduler; writes to VG only with WRITE_VG=true,
+// to LGL only with WRITE_LGL=true as well), one full pass or one change check by hand (--once full, vg-check,
+// lgl-check; dry unless --write-vg; LGL writes need --write-lgl too), the report (writes nothing to LGL or VG), the
 // one-time load of the import's decisions (dry unless --write-vg) and the service-account setup (records the
 // account's own privacy acknowledgement in VG, only on request).
 

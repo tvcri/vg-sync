@@ -42,7 +42,7 @@ function world(n, changed) {
   return { constituents, gifts: base.map((c) => gift(c.id)), persons, memory }
 }
 
-function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], runs = [], pages = [{ lastAuditId: 12, more: false, persons: [] }] } = {}) {
+function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], runs = [], pages = [{ lastAuditId: 12, more: false, persons: [] }], syncLog = [] } = {}) {
   const calls = []
   const rec = (name, ret) => async (...a) => { calls.push([name, ...a]); return typeof ret === 'function' ? ret(...a) : ret }
   const vg = {
@@ -62,8 +62,17 @@ function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], r
     putSyncFields: rec('putSyncFields', 1),
     createSyncHolds: rec('createSyncHolds', []),
     patchSyncHolds: rec('patchSyncHolds', 1),
+    getSyncLog: rec('getSyncLog', syncLog),
+    appendSyncLog: rec('appendSyncLog', (rows) => rows.length),
   }
-  const lgl = { pullConstituents: rec('pullConstituents', w.constituents), pullGifts: rec('pullGifts', w.gifts) }
+  const lgl = {
+    pullConstituents: rec('pullConstituents', w.constituents), pullGifts: rec('pullGifts', w.gifts),
+    getConstituentFull: rec('getConstituentFull', (id) => structuredClone(w.constituents.find((c) => String(c.id) === String(id)))),
+    addEntry: rec('addEntry', (id, kind, body) => ({ id: 900, not_current: false, ...body })),
+    patchEntry: rec('patchEntry', (kind, entryId, body) => ({ ...body })),
+    patchConstituent: rec('patchConstituent', (id, body) => ({ ...body })),
+    listEntries: rec('listEntries', []),
+  }
   const out = []
   const files = []
   const args = (extra = {}) => ({
@@ -76,6 +85,7 @@ function fakes({ w = world(1, 1), last = null, applyFails = false, holds = [], r
 }
 
 const WRITES = ['startRun', 'patchPerson', 'putSyncFields', 'putDonor', 'createSyncHolds', 'patchSyncHolds', 'finishRun']
+const LGL_WRITES = ['addEntry', 'patchEntry', 'patchConstituent', 'appendSyncLog']
 
 test('dry run: only GETs, a decisions file, PASS OK dry-run', async () => {
   const f = fakes()
@@ -85,7 +95,7 @@ test('dry run: only GETs, a decisions file, PASS OK dry-run', async () => {
   assert.equal(f.files[0].path, 'out/full-2026-11-12T10-00-00-000Z.jsonl')
   assert.ok(f.files[0].text.includes('write-vg'))
   assert.match(f.out.at(-1), /^PASS OK full dry-run people=1 writes=1 /)
-  assert.match(f.out.at(-1), /holdsOpen=0 holdsPlanned=0$/)
+  assert.match(f.out.at(-1), /holdsOpen=0 holdsPlanned=0 lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
 })
 
 test('write run: startRun, writes, finishRun ok with a cursor five minutes before the newest update', async () => {
@@ -102,7 +112,7 @@ test('write run: startRun, writes, finishRun ok with a cursor five minutes befor
   assert.equal(fin[2].lglCursor, '2026-11-10T11:55:00.000Z')
   assert.equal(fin[2].vgCursor, 12)
   assert.equal(fin[2].counts.constituents, 1)
-  assert.match(f.out.at(-1), /^PASS OK full write-vg people=1 writes=1 stale=0 refused=0 deferred=0 links=0 creates=0 unlinks=0 holdsOpened=0 holdsClosed=0 holdsOpen=0$/)
+  assert.match(f.out.at(-1), /^PASS OK full write-vg people=1 writes=1 stale=0 refused=0 deferred=0 links=0 creates=0 unlinks=0 holdsOpened=0 holdsClosed=0 holdsOpen=0 lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
   assert.ok(f.files[0].text.includes('"outcome":"written"'))
 })
 
@@ -141,7 +151,7 @@ test('circuit breaker on a dry run: the summary prints, a would-trip line, PASS 
   for (const n of WRITES) assert.ok(!f.names().includes(n), n)
   assert.equal(JSON.parse(f.out.at(-3)).counts.peopleChanged, 3)
   assert.match(f.out.at(-2), /would trip.*3 people.*limit of 2.*--max-people/)
-  assert.match(f.out.at(-1), /^PASS OK full dry-run people=3 .* breaker=would-trip$/)
+  assert.match(f.out.at(-1), /^PASS OK full dry-run people=3 .* breaker=would-trip lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
   assert.equal(f.files.length, 1)
 
   const g = fakes({ w: world(1, 1) })
@@ -419,4 +429,139 @@ test('an onResult that throws does not print a second verdict', async () => {
   const f = fakes()
   await assert.rejects(runFullPass(f.args({ onResult: () => { throw new Error('x') } })))
   assert.equal(f.out.filter((l) => l.startsWith('PASS ')).length, 1)
+})
+
+// Step 7: writes to LGL. LGL and VG agreed on the email; VG has since changed it for each person.
+function emailWorld(n) {
+  const w = world(n, 0)
+  w.persons = w.persons.map((p) => ({ ...p, email: 'jane.new@example.org' }))
+  return w
+}
+const allowAll = { ...baseConfig, lglWriteAllow: 'all' }
+let logId = 0
+const logRow = (personId, field, runId) => ({
+  logId: String(++logId), runId: String(runId), loggedAt: '2026-11-01T00:00:00.000Z', lglConstituentId: '101',
+  personId: String(personId), field, case: 'vg-changed', request: { method: 'PATCH', path: '/x', body: {} },
+  lglEntryId: null, oldValue: null, newValue: null, outcome: 'written', responseStatus: 200, note: null,
+})
+const decisionsOf = (f) => f.files[0].text.trim().split('\n').map((l) => JSON.parse(l))
+
+test('full pass: the LGL write log of 30 days is read once and counted per person and field', async () => {
+  // three distinct runs wrote 7's email (run 3 logged two calls); other fields and people do not count
+  const rows = [logRow(7, 'email', 1), logRow(7, 'email', 2), logRow(7, 'email', 3), logRow(7, 'email', 3),
+    logRow(7, 'address', 4), logRow(7, 'address', 5), logRow(8, 'email', 6), logRow(8, 'email', 7)]
+  const f = fakes({ w: emailWorld(1), syncLog: rows })
+  assert.equal(await runFullPass(f.args({ config: allowAll, writeVg: true, writeLgl: true })), 0)
+  const reads = f.calls.filter((c) => c[0] === 'getSyncLog')
+  assert.deepEqual(reads, [['getSyncLog', { outcome: 'written', since: '2026-10-13T10:00:00.000Z', limit: 5000 }]])
+  assert.ok(f.names().includes('addEntry'), 'three writes in thirty days: not flapping, written')
+
+  // a fourth run makes it more than three: held flapping, nothing sent
+  const g = fakes({ w: emailWorld(1), syncLog: [...rows, logRow(7, 'email', 9)] })
+  assert.equal(await runFullPass(g.args({ config: allowAll, writeVg: true, writeLgl: true })), 0)
+  for (const n of LGL_WRITES) assert.ok(!g.names().includes(n), n)
+  const d = decisionsOf(g).find((x) => x.field === 'email')
+  assert.deepEqual([d.outcome, d.note], ['hold', 'flapping'])
+  const opened = g.calls.find((c) => c[0] === 'createSyncHolds')[1]
+  assert.deepEqual(opened.map((h) => [h.personId, h.field, h.reason]), [['7', 'email', 'flapping']])
+})
+
+test('full pass: 5000 log rows (the limit) fails the pass safe: cannot count', async () => {
+  const rows = Array.from({ length: 5000 }, (_, i) => logRow(7, 'email', i))
+  const f = fakes({ w: emailWorld(1), syncLog: rows })
+  let result
+  assert.equal(await runFullPass(f.args({ config: allowAll, writeVg: true, writeLgl: true, onResult: (r) => { result = r } })), 1)
+  assert.match(f.out.at(-1), /^PASS FAILED full .*5000 rows.*cannot count/)
+  for (const n of [...WRITES, ...LGL_WRITES]) assert.ok(!f.names().includes(n), n)
+  assert.equal(result.retryable, false)
+})
+
+test('full pass: dry with an allow-list prints calls and sends nothing', async () => {
+  const f = fakes({ w: emailWorld(1) })
+  assert.equal(await runFullPass(f.args({ config: allowAll })), 0)
+  for (const n of [...WRITES, ...LGL_WRITES, 'getSyncLog', 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  const d = decisionsOf(f).find((x) => x.field === 'email')
+  assert.deepEqual([d.outcome, d.note], ['deferred', 'write-lgl off'])
+  assert.ok(d.calls.length >= 1, 'the decision carries the calls it would make')
+  assert.match(f.out.at(-1), /deferred=1 .* lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
+
+  // writing LGL on but VG off (a dry pass): what would be sent is counted, nothing is sent
+  const g = fakes({ w: emailWorld(1) })
+  assert.equal(await runFullPass(g.args({ config: allowAll, writeLgl: true })), 0)
+  for (const n of [...WRITES, ...LGL_WRITES, 'getConstituentFull']) assert.ok(!g.names().includes(n), n)
+  assert.match(g.out.at(-1), /^PASS OK full dry-run people=1 .*deferred=0 .* lgl-writes=1 lgl-stale=0 lgl-refused=0$/)
+})
+
+test('full pass: --write-lgl sends allowed writes and records writeLgl true in the run row', async () => {
+  const f = fakes({ w: emailWorld(2) })
+  const config = { ...baseConfig, lglWriteAllow: new Set(['101']) }
+  assert.equal(await runFullPass(f.args({ config, writeVg: true, writeLgl: true })), 0)
+  const start = f.calls.find((c) => c[0] === 'startRun')[1]
+  assert.deepEqual(start.switches, { writeVg: true, writeLgl: true })
+  // 101 is on the allow-list: the new email is added and the one read retired; 102 is not
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'getConstituentFull').map((c) => String(c[1])), ['101'])
+  const add = f.calls.find((c) => c[0] === 'addEntry')
+  assert.equal(String(add[1]), '101')
+  assert.equal(add[3].address, 'jane.new@example.org')
+  assert.equal(f.calls.find((c) => c[0] === 'patchEntry')[3].not_current, true)
+  const appended = f.calls.find((c) => c[0] === 'appendSyncLog')[1]
+  assert.ok(appended.every((r) => r.runId === 9 || r.runId === '9'), 'log rows carry the run id')
+  const not = decisionsOf(f).find((x) => x.field === 'email' && x.constituentId === '102')
+  assert.deepEqual([not.outcome, not.note], ['deferred', 'not-allowed'])
+  const fin = f.calls.find((c) => c[0] === 'finishRun')[2]
+  assert.equal(fin.result, 'ok')
+  assert.deepEqual(fin.counts.apply.lgl, { written: 1, stale: 0, refused: 0 })
+  assert.equal(fin.counts.lglWritesPlanned, 1)
+  // the agreed value is VG's
+  const agreed = f.calls.find((c) => c[0] === 'putSyncFields')[1].find((r) => r.field === 'email')
+  assert.equal(agreed.personId, '7')
+})
+
+test('full pass: PASS OK carries lgl-writes, lgl-stale, lgl-refused after the existing keys', async () => {
+  // 101 is written; 102's LGL email moved between the pull and the fresh read (stale); 103 is refused
+  const w = emailWorld(3)
+  const f = fakes({ w })
+  f.lgl.getConstituentFull = async (id) => {
+    f.calls.push(['getConstituentFull', id])
+    const c = structuredClone(w.constituents.find((x) => String(x.id) === String(id)))
+    if (String(id) === '102') c.email_addresses[0].address = 'jane.moved@example.org'
+    return c
+  }
+  f.lgl.addEntry = async (id, kind, body) => {
+    f.calls.push(['addEntry', id, kind, body])
+    if (String(id) === '103') throw Object.assign(new Error('LGL POST → 422: invalid'), { status: 422 })
+    return { id: 900, not_current: false, ...body }
+  }
+  assert.equal(await runFullPass(f.args({ config: allowAll, writeVg: true, writeLgl: true })), 0)
+  assert.match(f.out.at(-1), new RegExp('^PASS OK full write-vg people=3 writes=0 stale=0 refused=0 deferred=0 links=0 creates=0 unlinks=0 ' +
+    'holdsOpened=1 holdsClosed=0 holdsOpen=1 lgl-writes=1 lgl-stale=1 lgl-refused=1$'))
+})
+
+test('full pass: LGL writes that will be sent count toward the breaker; deferred ones do not', async () => {
+  const small = (o) => ({ ...baseConfig, circuitBreakerPeople: 1, ...o })
+  // both allowed: two people, over the limit of one
+  const f = fakes({ w: emailWorld(2) })
+  assert.equal(await runFullPass(f.args({ config: small({ lglWriteAllow: 'all' }), writeVg: true, writeLgl: true })), 1)
+  assert.match(f.out.at(-1), /^PASS FAILED full The plan changes 2 people, more than the limit of 1/)
+  for (const n of [...WRITES, ...LGL_WRITES]) assert.ok(!f.names().includes(n), n)
+  // one allowed: one person, inside the limit
+  const g = fakes({ w: emailWorld(2) })
+  assert.equal(await runFullPass(g.args({ config: small({ lglWriteAllow: new Set(['101']) }), writeVg: true, writeLgl: true })), 0)
+  assert.match(g.out.at(-1), /^PASS OK full write-vg people=1 /)
+  // writing LGL off: both deferred, nobody changed
+  const h = fakes({ w: emailWorld(2) })
+  assert.equal(await runFullPass(h.args({ config: small({ lglWriteAllow: 'all' }), writeVg: true })), 0)
+  assert.match(h.out.at(-1), /^PASS OK full write-vg people=0 .*deferred=2 /)
+})
+
+test('full pass: an open lgl-refused hold on the same write is not tried again', async () => {
+  const { fingerprint } = await import('../../src/lgl-vg/plan.js')
+  const { comparable } = await import('../../src/lgl-vg/fields.js')
+  const fp = fingerprint(['email', comparable('email', 'jane.new@example.org')])
+  const holds = [{ holdId: '1', lglConstituentId: '101', personId: '7', field: 'email', reason: 'lgl-refused', fingerprint: fp, state: 'open', detail: { error: 'invalid' } }]
+  const f = fakes({ w: emailWorld(1), holds })
+  assert.equal(await runFullPass(f.args({ config: allowAll, writeVg: true, writeLgl: true })), 0)
+  for (const n of ['addEntry', 'patchEntry', 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  const d = decisionsOf(f).find((x) => x.field === 'email')
+  assert.deepEqual([d.outcome, d.note], ['hold', 'lgl-refused'])
 })

@@ -1,6 +1,8 @@
 // The full pass: read LGL and VG, plan every linked pair and every unlinked donor, and (only with
-// writeVg) apply the plan. Never calls an LGL write. Without writeVg, VG sees GET requests only.
-import { planLinked } from './plan.js'
+// writeVg) apply the plan. LGL writes are sent only with writeLgl (which needs writeVg), and only to
+// constituents on the allow-list. Without writeVg, VG sees GET requests only.
+import { planLinked, lglWriteLogQuery, countLglWrites } from './plan.js'
+import { allowedForLgl } from './config.js'
 import { planUnlinked } from './unlinked.js'
 import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
@@ -18,7 +20,7 @@ function lglCursorOf(constituents) {
 }
 
 export async function runFullPass({
-  config, policy, vg, lgl = null, snapshot = null, writeVg = false, maxPeople = null, vgCursorFrom = null,
+  config, policy, vg, lgl = null, snapshot = null, writeVg = false, writeLgl = false, maxPeople = null, vgCursorFrom = null,
   now, writeLines, stdout, out, signal = null, quiet = false, onResult = () => {},
 }) {
   const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-')
@@ -74,6 +76,9 @@ export async function runFullPass({
     checkStop()
     const last = await read(vg.lastFullRun())
     checkStop()
+    // The flapping guard's count, only when LGL writes can be sent.
+    const lglWriteCounts = writeLgl ? countLglWrites(await read(vg.getSyncLog(lglWriteLogQuery(now())))) : new Map()
+    checkStop()
 
     const lastCount = last?.counts?.constituents
     if (Number.isFinite(lastCount) && lastCount > 0) {
@@ -86,15 +91,19 @@ export async function runFullPass({
     }
 
     // An open or dismissed refusal of the same write suppresses it; a dismissed one stays dismissed.
-    const refusals = holdsRead.filter((h) => (h.state === 'open' || h.state === 'dismissed') && h.reason === 'vg-refused')
-    const plan = planLinked({ constituents, gifts, persons, memory, refusals, policy, config })
+    const refusals = holdsRead.filter((h) => (h.state === 'open' || h.state === 'dismissed') &&
+      (h.reason === 'vg-refused' || h.reason === 'lgl-refused'))
+    const lglSend = (id) => writeLgl && allowedForLgl(config, id)
+    const plan = planLinked({ constituents, gifts, persons, memory, refusals, policy, config, lglSend, writeLgl, lglWriteCounts })
     const today = new Date(now()).toISOString().slice(0, 10)
     const unlinkedPlan = (people, unlinking) => planUnlinked({ constituents, gifts, persons: people, holds: holdsRead, unlinking, config, today })
     const unlinked = unlinkedPlan(persons, plan.unlinks)
     plan.unlinked = unlinked
-    // People changed: field and gift date writes, links, follows, finishes and unlinks; a create counts once.
+    // People changed: field and gift date writes, LGL writes that will be sent, links, follows, finishes
+    // and unlinks; a create counts once.
     plan.counts.peopleChanged = new Set([
       ...plan.writes.map((w) => w.personId),
+      ...plan.lglWrites.filter((w) => w.send).flatMap((w) => w.personIds),
       ...[...unlinked.links, ...unlinked.follows, ...unlinked.finishes, ...unlinked.unlinks].map((w) => w.personId),
       ...unlinked.creates.map((w) => `new:${w.constituentId}`),
     ]).size
@@ -117,12 +126,13 @@ export async function runFullPass({
       if (live) throw new Error(`another sync run (id ${live.runId}, ${live.kind}) started at ${live.startedAt} is still running; nothing was written`)
       checkStop()
       const run = await vg.startRun({
-        kind: 'full', switches: { writeVg: true, writeLgl: false },
+        kind: 'full', switches: { writeVg: true, writeLgl },
         imageRevision: config.imageRevision, policyHash: policy.hash,
       })
       runId = run.runId
       applied = await applyPlan(plan, {
         vg, existingHolds: holdsRead, log: (d) => logged.push(d), replan: (fresh) => unlinkedPlan(fresh, []), signal,
+        lgl, runId, policy,
       })
       if (applied.stopped) throw stopError()
       await vg.finishRun(runId, {
@@ -153,6 +163,11 @@ export async function runFullPass({
         `links=${uc.link + uc.follow + uc.finish}`, `creates=${uc.create}`, `unlinks=${uc.unlink}`,
         'holdsOpened=0', 'holdsClosed=0', `holdsOpen=${openRead}`, `holdsPlanned=${plan.counts.holds + unlinked.holds.length}`,
         ...(trips ? ['breaker=would-trip'] : [])]
+    // LGL's keys follow the others. Dry: the writes that would be sent.
+    const al = a?.lgl
+    parts.push(...(writeVg
+      ? [`lgl-writes=${al.written}`, `lgl-stale=${al.stale}`, `lgl-refused=${al.refused}`]
+      : [`lgl-writes=${plan.counts.lglWritesPlanned}`, 'lgl-stale=0', 'lgl-refused=0']))
     stdout(`PASS OK full ${mode} people=${plan.counts.peopleChanged} ${parts.join(' ')}`)
     result = {
       outcome: 'ok', retryable: false, error: null,
