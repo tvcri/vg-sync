@@ -342,3 +342,28 @@ test('lglAttempts reaches every LGL call', async () => {
   assert.deepEqual(seen.map((s) => s[0]), ['getConstituentFull', 'addEntry', 'patchEntry', 'patchConstituent'])
   assert.ok(seen.every((s) => s[1]?.attempts === 1))
 })
+
+test('a check read that fails after an add still logs the add before the run fails', async () => {
+  const lgl = fakeLgl({ answer: (method, path, body) => (method === 'POST' ? { id: 905 } : { ...body }) })
+  lgl.listEntries = async () => { throw lglError(500) }
+  const vg = fakeVg()
+  await assert.rejects(run([emailW()], { lgl, vg }), /500/)
+  assert.deepEqual(sent(lgl).map((c) => c[0]), ['POST']) // no retire
+  assert.deepEqual(vg.appends.map((rows) => rows.map((x) => [x.request.method, x.outcome, x.lglEntryId])), [[['POST', 'written', '905']]])
+})
+
+test('a 404 on a retire means the entry is already gone: the field is written', async () => {
+  const lgl = fakeLgl({
+    answer: (method, path, body) => {
+      if (path === '/email_addresses/11') throw lglError(404)
+      return method === 'POST' ? { id: 905, not_current: false } : { ...body }
+    },
+  })
+  const { r, vg } = await run([emailW()], { lgl })
+  assert.deepEqual(r.counts, { written: 1, stale: 0, refused: 0 })
+  assert.deepEqual(r.holds, [])
+  assert.deepEqual(r.agree.map((a) => [a.field, a.lglEntryId]), [['email', '905']])
+  assert.deepEqual(vg.appends[0].map((x) => [x.request.method, x.outcome, x.responseStatus, x.note]), [
+    ['POST', 'written', 200, null], ['PATCH', 'written', 404, 'already gone'],
+  ])
+})

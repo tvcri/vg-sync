@@ -3,6 +3,7 @@
 // saw, the calls built from the fresh record and sent in order, then one sync_log append of every
 // call sent. A field's calls stop at its first refusal (400, 404, 422, or an added or revived entry
 // LGL stored as not current), which opens an lgl-refused hold; the constituent's other fields go on.
+// A 404 on a retire is not a refusal: the entry is already gone, and the field is written.
 // Any other failure fails the run, after logging the calls already sent. A stop (signal aborted) is
 // checked between constituents: the one in hand finishes its calls and its log append.
 import { lglFields, comparable } from './fields.js'
@@ -101,13 +102,25 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
         try {
           res = await send(id, call)
         } catch (e) {
+          // A retire of an entry LGL no longer has (its daily dedup deletes entries) is done already.
+          if (call.step === 'retire' && e?.status === 404) {
+            logCall(call, entryIdOf(call, null), 'written', 404, 'already gone')
+            continue
+          }
           if (!isRefusal(e)) throw e
           return refuse(call, call.step === 'add' ? null : entryIdOf(call, null), e.status, e.message)
         }
         const entryId = entryIdOf(call, res)
         // Checked before the retire that follows, so a refusal never leaves nothing current.
-        if ((call.step === 'add' || call.step === 'revive') && !(await took(id, call, res, entryId))) {
-          return refuse(call, entryId, OK, NOT_CURRENT)
+        if (call.step === 'add' || call.step === 'revive') {
+          let current
+          try {
+            current = await took(id, call, res, entryId)
+          } catch (e) {
+            logCall(call, entryId, 'written', OK, 'not checked: the entry list could not be read') // it was sent
+            throw e
+          }
+          if (!current) return refuse(call, entryId, OK, NOT_CURRENT)
         }
         if (call.step === 'add' || call.step === 'revive') entryWritten = entryId
         logCall(call, entryId, 'written', OK, null)
