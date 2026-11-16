@@ -123,3 +123,39 @@ test('expect.vg.donorOf names the scenario whose constituent the person is linke
   const f = checkScenario({ ...base, constituentIds: { s: 22, other: 33 } })
   assert.deepEqual(f.map((x) => [x.what, x.expected, x.found]), [['vg.donorOf', 'other (33)', 's (22)']])
 })
+
+const con = (over = {}) => ({
+  addressee: 'Jane Doe', salutation: 'Jane',
+  email_addresses: [{ id: 1, not_current: false }, { id: 2, not_current: true }, { id: 3, not_current: true }],
+  phone_numbers: [{ id: 4, not_current: false }],
+  ...over,
+})
+const withLgl = (expect, c = con(), extra = {}) => run([{ expect }], { lglConstituent: c, ...extra })
+
+test('lglWrites counts write-lgl decisions only', () => {
+  const d = [{ outcome: 'write-lgl' }, { outcome: 'write-lgl' }, { outcome: 'write-vg' }]
+  assert.deepEqual(run([{ expect: { lglWrites: 2, writes: 1 } }], { decisions: d }), [])
+  const f = run([{ expect: { lglWrites: 1 } }], { decisions: d })
+  assert.deepEqual(f.map((x) => [x.what, x.expected, x.found]), [['lglWrites', 1, 2]])
+})
+
+test('lgl addressee and salutation compare plainly', () => {
+  assert.deepEqual(withLgl({ lgl: { addressee: 'Jane Doe', salutation: 'Jane' } }), [])
+  const f = withLgl({ lgl: { addressee: 'Jane and John Doe', salutation: 'Jane' } })
+  assert.deepEqual(f.map((x) => [x.what, x.expected, x.found]), [['lgl.addressee', 'Jane and John Doe', 'Jane Doe']])
+  assert.equal(withLgl({ lgl: { salutation: 'Dear Jane' } })[0].what, 'lgl.salutation')
+})
+
+test('lglEntries counts current and total per kind as read back', () => {
+  assert.deepEqual(withLgl({ lglEntries: { email_addresses: { current: 1, total: 3 }, phone_numbers: { current: 1, total: 1 } } }), [])
+  const f = withLgl({ lglEntries: { email_addresses: { current: 2, total: 3 } } })
+  assert.deepEqual(f.map((x) => [x.what, x.expected, x.found]), [['lglEntries.email_addresses.current', 2, 1]])
+  const g = withLgl({ lglEntries: { street_addresses: { current: 0, total: 0 } } })
+  assert.deepEqual(g, [], 'a kind the constituent has no list for counts as empty')
+  assert.equal(withLgl({ lglEntries: { email_addresses: { current: 1, total: 2 } } })[0].what, 'lglEntries.email_addresses.total')
+})
+
+test('lglEntries with no constituent fails as missing', () => {
+  const f = run([{ expect: { lglEntries: { email_addresses: { current: 1, total: 1 } } } }])
+  assert.equal(f[0].what, 'lglEntries')
+})

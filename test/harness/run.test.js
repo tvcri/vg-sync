@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { planRun, parseArgs, lglDonor, scenarioRows } from '../../harness/run.js'
+import { planRun, parseArgs, lglDonor, scenarioRows, passArgv } from '../../harness/run.js'
 
 const scen = (name, n, extra = {}) => ({ name, phases: Array.from({ length: n }, () => ({ expect: { writes: 0 } })), ...extra })
 const kinds = (steps) => steps.map((s) => s.kind)
@@ -174,4 +174,9 @@ test('planRun rejects a group whose scenarios name different runs for one phase'
 
 test('parseArgs: --step defaults to 6', () => {
   assert.equal(parseArgs([]).step, 6)
+})
+
+test('a pass runs with --write-vg and --write-lgl, then the phase args', () => {
+  const argv = passArgv({ command: ['--once', 'full', '--out', 'd'], args: ['--x'] })
+  assert.deepEqual(argv, ['src/lgl-vg/main.js', '--once', 'full', '--out', 'd', '--env', '.env.harness', '--write-vg', '--write-lgl', '--x'])
 })

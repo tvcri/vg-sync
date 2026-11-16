@@ -2,7 +2,7 @@
 import { FIELDS, comparable, lglFields, vgFields } from '../src/lgl-vg/fields.js'
 import { resolveDate } from './scenario.js'
 
-const PLAIN = ['lastGiftDate', 'donor']
+const PLAIN = ['lastGiftDate', 'donor', 'addressee', 'salutation']
 const holdKey = (h) => `${h.field}|${h.reason}|${h.state ?? 'open'}`
 
 // vgPersons: one person or two, as GET /persons?projection=detail returns them
@@ -11,7 +11,9 @@ const holdKey = (h) => `${h.field}|${h.reason}|${h.state ?? 'open'}`
 //   expect.lgl.lastGiftDate and .donor the constituent is read as a plain object
 //   (c.lastGiftDate, c.donor), which the runner may set from the gifts it made.
 // holds: this scenario's rows from /sync/holds. decisions: the pass's rows for them
-//   (expect.writes, .deferred and .records count outcomes write-vg, deferred and record).
+//   (expect.writes, .lglWrites, .deferred and .records count outcomes write-vg, write-lgl, deferred and record).
+// expect.lgl.addressee and .salutation compare plainly; expect.lglEntries { <kind>: { current, total } }
+//   counts the entries on the constituent's lists as getConstituent read them back (current: not not_current).
 // passStartedAt: ISO string; a hold with firstSeenAt >= it was opened in this pass.
 // phaseIndex is 0-based; one past the scenario's phases is checked as undisturbed.
 // passExitCode: the pass's exit code; with expect.passFails a zero exit is the failure.
@@ -86,6 +88,17 @@ export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent
     }
   }
 
+  if (expect.lglEntries !== undefined) {
+    if (!lglConstituent) fail('lglEntries', 'a constituent', 'missing')
+    else {
+      for (const [kind, want] of Object.entries(expect.lglEntries)) {
+        const list = lglConstituent[kind] ?? []
+        if (want.current !== undefined) compare(`lglEntries.${kind}.current`, want.current, list.filter((e) => !e.not_current).length)
+        if (want.total !== undefined) compare(`lglEntries.${kind}.total`, want.total, list.length)
+      }
+    }
+  }
+
   if (expect.holds !== undefined) {
     const wanted = expect.holds.map(holdKey).sort()
     const states = new Set(['open', ...expect.holds.map((h) => h.state ?? 'open')])
@@ -95,6 +108,7 @@ export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent
   if (expect.passFails === true && passExitCode === 0) fail('pass exit', 'non-zero', 0)
   if (expect.writes !== undefined) compare('writes', expect.writes, writes)
   if (expect.records !== undefined) compare('records', expect.records, decisions.filter((d) => d.outcome === 'record').length)
+  if (expect.lglWrites !== undefined) compare('lglWrites', expect.lglWrites, decisions.filter((d) => d.outcome === 'write-lgl').length)
   if (expect.deferred !== undefined) compare('deferred', expect.deferred, decisions.filter((d) => d.outcome === 'deferred').length)
 
   return failures

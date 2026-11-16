@@ -159,10 +159,15 @@ async function loadScenarioModules () {
   return modules
 }
 
+// The service's argv for one pass: writes to VG and to LGL (LGL_WRITE_ALLOW in .env.harness limits which constituents).
+export function passArgv ({ command, args }) {
+  return ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', '--write-lgl', ...args]
+}
+
 // Runs one pass (or one change check) as a child process; its output goes to the screen and to the log.
 function runPass ({ dir, args, log, run = 'full', command = ['--once', run, '--out', dir], logName = `${basename(dir)}.log` }) {
   const exampleText = readFileSync(join(REPO, '.env.harness.example'), 'utf8')
-  const argv = ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', ...args]
+  const argv = passArgv({ command, args })
   log(`$ node ${argv.join(' ')}`)
   return new Promise((resolve, reject) => {
     const file = createWriteStream(join(dir, logName))
