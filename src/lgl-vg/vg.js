@@ -1,7 +1,7 @@
 // Client for the Village Green API, signed in as a Keycloak service account
 // (client-credentials grant). Reads the roster; creates people and writes person and donor
 // changes (a donor row can be removed); calls the town lookup; and reads and writes the sync
-// tables (field memory, holds, runs). Batch calls are split into chunks of 500, the API's limit.
+// tables (field memory, holds, runs, the LGL write log). Batch calls are split into chunks of 500, the API's limit.
 // fetch and the clock are injectable for tests.
 
 const EXPIRY_MARGIN_MS = 30_000
@@ -143,6 +143,16 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
     },
     async patchSyncHolds(items) {
       return sum(await inBatches('PATCH', '/sync/holds', items), 'updated')
+    },
+    // The LGL write log: rows for calls sent to LGL, in batches of 500. Returns how many were appended.
+    async appendSyncLog(rows) {
+      return sum(await inBatches('POST', '/sync/log', rows), 'appended')
+    },
+    // outcome is one value or an array; each is sent as a repeated outcome param. since is omitted when not given.
+    getSyncLog({ outcome, since, limit = 5000 }) {
+      const q = new URLSearchParams([...[].concat(outcome ?? []).map((o) => ['outcome', o]), ['limit', String(limit)]])
+      if (since) q.set('since', since)
+      return get(`/sync/log?${q}`)
     },
     startRun: ({ kind, switches, imageRevision, policyHash }) =>
       request('POST', '/sync/runs', { kind, switches, imageRevision, policyHash }),

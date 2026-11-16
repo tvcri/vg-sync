@@ -426,3 +426,44 @@ test('apiState fails on a non-OK answer after one attempt', async () => {
   await assert.rejects(make([{ status: 503, body: 'down' }, { body: {} }], calls).apiState(), (e) => e.status === 503)
   assert.equal(calls.length, 1)
 })
+
+test('appendSyncLog sends batches of 500 and sums appended', async () => {
+  const calls = []
+  const rows = Array.from({ length: 1201 }, (_, i) => ({ runId: 1, field: 'email', n: i }))
+  const vg = make([tok(), { body: { appended: 500 } }, { body: { appended: 500 } }, { body: { appended: 201 } }], calls)
+  assert.equal(await vg.appendSyncLog(rows), 1201)
+  const posts = calls.slice(1)
+  assert.deepEqual(posts.map((c) => c.init.method), ['POST', 'POST', 'POST'])
+  assert.ok(posts.every((c) => c.url.pathname === '/api/sync/log'))
+  assert.deepEqual(posts.map((c) => json(c).length), [500, 500, 201])
+  assert.deepEqual(json(posts[0])[0], rows[0])
+  assert.deepEqual(json(posts[2])[0], rows[1000])
+})
+
+test('appendSyncLog with no rows makes no call', async () => {
+  const calls = []
+  assert.equal(await make([], calls).appendSyncLog([]), 0)
+  assert.equal(calls.length, 0)
+})
+
+test('getSyncLog sends outcome, since and limit as query', async () => {
+  const calls = []
+  const vg = make([tok(), { body: [] }, { body: [] }], calls)
+  await vg.getSyncLog({ outcome: 'written', since: '2026-11-01T00:00:00Z', limit: 10 })
+  assert.equal(calls[1].init.method, 'GET')
+  assert.equal(calls[1].url.pathname, '/api/sync/log')
+  assert.deepEqual(calls[1].url.searchParams.getAll('outcome'), ['written'])
+  assert.equal(calls[1].url.searchParams.get('since'), '2026-11-01T00:00:00Z')
+  assert.equal(calls[1].url.searchParams.get('limit'), '10')
+
+  await vg.getSyncLog({ outcome: ['written', 'failed'] })
+  assert.deepEqual(calls[2].url.searchParams.getAll('outcome'), ['written', 'failed'])
+  assert.equal(calls[2].url.searchParams.get('limit'), '5000')
+  assert.equal(calls[2].url.searchParams.has('since'), false)
+})
+
+test('getSyncLog returns the rows the API sends', async () => {
+  const rows = [{ syncLogId: 1, outcome: 'written' }]
+  const vg = make([tok(), { body: rows }])
+  assert.deepEqual(await vg.getSyncLog({ outcome: 'written' }), rows)
+})
