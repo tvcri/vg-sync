@@ -10,17 +10,26 @@
 // create's whole sequence counts as one), the next is not started. A stopped pass saves its memory and
 // opens the new holds its writes produced, but closes and reopens nothing: reconciliation compares
 // against the whole plan, and the next pass reconciles everything.
+// LGL writes (plan.lglWrites marked send, step 7) follow the donor writes when an LGL client is
+// given: apply-lgl.js sends them; their memory and holds join the rest.
 import { vgFields, comparable } from './fields.js'
 import { reconcileHolds } from './holds.js'
+import { applyLglWrites } from './apply-lgl.js'
 import { unlinkedNotice, createUnfinished } from './unlinked.js'
 
 const isRefusal = (e) => [400, 404, 422].includes(e?.status)
 const aborted = (signal) => signal?.aborted === true
 
-export async function applyPlan(plan, { vg, existingHolds = [], log = () => {}, replan = null, signal = null }) {
+// lgl: the LGL client (null sends nothing to LGL); runId: the sync_log rows' run; policy: gives the
+// lgl-addressee setting; lglAttempts bounds each LGL call's retries (a check passes 1).
+export async function applyPlan(plan, {
+  vg, existingHolds = [], log = () => {}, replan = null, signal = null,
+  lgl = null, runId = null, policy = null, lglAttempts,
+}) {
   const counts = {
     written: 0, stale: 0, refused: 0, townMissing: 0, memoryUpserted: 0, holds: {},
     unlinked: { linked: 0, followed: 0, created: 0, finished: 0, unlinked: 0, stale: 0, refused: 0 },
+    lgl: { written: 0, stale: 0, refused: 0 },
   }
   const agree = [...plan.agree]
   const refusalHolds = []
@@ -106,6 +115,14 @@ export async function applyPlan(plan, { vg, existingHolds = [], log = () => {}, 
     note(w.personId, w.constituentId, 'lastGiftDate', 'written')
   }
 
+  const lglWrites = (plan.lglWrites ?? []).filter((w) => w.send)
+  const l = lgl && lglWrites.length && !stopped
+    ? await applyLglWrites(lglWrites, { lgl, vg, runId, policy, log, signal, attempts: lglAttempts })
+    : { counts: counts.lgl, agree: [], holds: [], stopped }
+  counts.lgl = l.counts
+  agree.push(...l.agree)
+  stopped = l.stopped
+
   const u = plan.unlinked && !stopped
     ? await applyUnlinked(plan.unlinked, { vg, log, replan, signal, counts: counts.unlinked })
     : { holds: [], stopped }
@@ -116,13 +133,13 @@ export async function applyPlan(plan, { vg, existingHolds = [], log = () => {}, 
 
   if (stopped) {
     // Only the holds the writes done produced, and only the new ones: nothing is closed or reopened.
-    const { open } = reconcileHolds([...refusalHolds, ...u.holds], existingHolds)
+    const { open } = reconcileHolds([...refusalHolds, ...l.holds, ...u.holds], existingHolds)
     counts.holds = { opened: open.length, seen: 0, changed: 0, reopened: 0, closed: 0, stillDismissed: 0 }
     if (open.length) await vg.createSyncHolds(open)
     return { counts, stopped }
   }
 
-  const desired = [...plan.holds, ...refusalHolds, ...(plan.unlinked?.holds ?? []), ...u.holds]
+  const desired = [...plan.holds, ...refusalHolds, ...l.holds, ...(plan.unlinked?.holds ?? []), ...u.holds]
   const { open, patch, counts: holdCounts } = reconcileHolds(desired, existingHolds)
   counts.holds = holdCounts
   if (open.length) await vg.createSyncHolds(open)

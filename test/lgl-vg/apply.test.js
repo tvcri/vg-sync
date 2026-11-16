@@ -384,3 +384,85 @@ test('without a signal nothing changes', async () => {
   assert.deepEqual(vg.calls.find((c) => c[0] === 'putSyncFields')[1].map((x) => x.field), ['firstName'])
   assert.deepEqual(logged.map((d) => [d.field, d.outcome]), [['email', 'stale'], ['firstName', 'written']])
 })
+
+// --- LGL writes (step 7) ---
+const lglCon = () => ({
+  id: 101, first_name: 'Jane', last_name: 'Doe', nick_name: null, suffix: null,
+  addressee: 'Jane Doe', salutation: 'Jane', is_deceased: false, deceased_date: null,
+  email_addresses: [{ id: 11, address: 'old@example.org', is_preferred: true, not_current: false }],
+  street_addresses: [], phone_numbers: [],
+})
+const lglEmailW = (o = {}) => ({
+  kind: 'lgl', constituentId: '101', personIds: ['7'], field: 'email', case: 'vg-changed',
+  value: 'new@example.org', expect: comparable('email', 'old@example.org'), fingerprint: 'fe', merge: false, send: true, ...o,
+})
+// Records its calls into the VG fake's list, so the order across both systems shows.
+function fakeLglInto(vg) {
+  const rec = (name, fn) => async (...a) => { vg.calls.push([name, ...a]); return fn(...a) }
+  return {
+    getConstituentFull: rec('lgl.getConstituentFull', () => lglCon()),
+    addEntry: rec('lgl.addEntry', (id, kind, body) => ({ id: 900, not_current: false, ...body })),
+    patchEntry: rec('lgl.patchEntry', (kind, entryId, body) => ({ ...body })),
+    patchConstituent: rec('lgl.patchConstituent', (id, body) => ({ ...body })),
+    listEntries: rec('lgl.listEntries', () => []),
+  }
+}
+const withLog = (vg) => Object.assign(vg, {
+  appendSyncLog: async (rows) => { vg.calls.push(['appendSyncLog', rows]); return rows.length },
+})
+
+test('applyPlan sends LGL writes after VG writes and upserts their memory with the rest', async () => {
+  const vg = withLog(fake())
+  const lgl = fakeLglInto(vg)
+  const plan = {
+    ...emptyPlan, writes: [oneField('7', 'fa')], agree: [agreeRow('9', 'email')],
+    lglWrites: [lglEmailW(), lglEmailW({ personIds: ['8'], constituentId: '102', send: false })],
+  }
+  const policy = { setting: () => 'if-default' }
+  const r = await applyPlan(plan, { vg, lgl, runId: '42', policy, existingHolds: [] })
+  assert.deepEqual(names(vg), [
+    'getLinkedPersons', 'patchPerson',
+    'lgl.getConstituentFull', 'lgl.addEntry', 'lgl.patchEntry', 'appendSyncLog',
+    'putSyncFields',
+  ])
+  // only the write to send went out: constituent 102 was never read
+  assert.deepEqual(vg.calls.filter((c) => c[0] === 'lgl.getConstituentFull').map((c) => c[1]), ['101'])
+  assert.equal(vg.calls.find((c) => c[0] === 'appendSyncLog')[1][0].runId, '42')
+  assert.deepEqual(vg.calls.find((c) => c[0] === 'putSyncFields')[1], [
+    agreeRow('9', 'email'), agreeRow('7', 'firstName'),
+    { personId: '7', field: 'email', lglConstituentId: '101', value: 'new@example.org', lglEntryId: '900' },
+  ])
+  assert.equal(r.counts.memoryUpserted, 3)
+  assert.equal(r.counts.written, 1)
+  assert.deepEqual(r.counts.lgl, { written: 1, stale: 0, refused: 0 })
+})
+
+test('applyPlan merges LGL refusal holds into the desired holds', async () => {
+  const vg = withLog(fake())
+  const lgl = fakeLglInto(vg)
+  lgl.addEntry = async () => { throw Object.assign(new Error('LGL → 422: bad'), { status: 422 }) }
+  const r = await applyPlan({ ...emptyPlan, lglWrites: [lglEmailW()] }, { vg, lgl, runId: '42', policy: null, existingHolds: [] })
+  const created = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
+  assert.deepEqual(created.map((h) => [h.personId, h.field, h.reason]), [['7', 'email', 'lgl-refused']])
+  assert.deepEqual(r.counts.lgl, { written: 0, stale: 0, refused: 1 })
+  assert.equal(r.counts.holds.opened, 1)
+})
+
+test('applyPlan with no lgl client sends nothing to LGL', async () => {
+  const vg = withLog(fake())
+  const r = await applyPlan({ ...emptyPlan, lglWrites: [lglEmailW()] }, { vg, existingHolds: [] })
+  assert.ok(!names(vg).some((n) => n.startsWith('lgl.') || n === 'appendSyncLog'))
+  assert.deepEqual(r.counts.lgl, { written: 0, stale: 0, refused: 0 })
+})
+
+test('applyPlan stopped before the LGL writes sends none of them', async () => {
+  const vg = withLog(fake())
+  const lgl = fakeLglInto(vg)
+  const ac = new AbortController()
+  const patch = vg.patchPerson
+  vg.patchPerson = async (...a) => { ac.abort(); return patch(...a) }
+  const r = await applyPlan({ ...emptyPlan, writes: [oneField('7', 'fa')], lglWrites: [lglEmailW()] }, { vg, lgl, existingHolds: [], signal: ac.signal })
+  assert.equal(r.stopped, true)
+  assert.ok(!names(vg).some((n) => n.startsWith('lgl.')))
+  assert.deepEqual(r.counts.lgl, { written: 0, stale: 0, refused: 0 })
+})
