@@ -127,7 +127,13 @@ const ORDINALS = {
   first: '1st', second: '2nd', third: '3rd', fourth: '4th', fifth: '5th', sixth: '6th',
   seventh: '7th', eighth: '8th', ninth: '9th', tenth: '10th', eleventh: '11th', twelfth: '12th',
 }
-const UNIT_WORDS = new Set(['apt', 'apartment', 'unit', 'suite', 'ste'])
+// USPS Publication 28, Appendix C2: secondary unit designators, abbreviated and spelled out.
+const UNIT_WORDS = new Set([
+  'apt', 'apartment', 'bldg', 'building', 'dept', 'department', 'fl', 'floor', 'frnt', 'front',
+  'hngr', 'hangar', 'key', 'lbby', 'lobby', 'lot', 'lowr', 'lower', 'ofc', 'office', 'ph', 'penthouse',
+  'pier', 'rear', 'rm', 'room', 'side', 'slip', 'spc', 'space', 'stop', 'ste', 'suite', 'trlr', 'trailer',
+  'unit', 'uppr', 'upper',
+])
 
 // A unit word is dropped only when a unit designator follows: a token with a digit, or a single letter.
 const isDesignator = (w) => w != null && (/\d/.test(w) || /^[a-z]$/.test(w))
@@ -193,4 +199,20 @@ export function keepsNickname (lglFirst, vgFirst) {
   const parts = (s) => [...String(s ?? '').matchAll(/\(([^)]*)\)/g)].map((m) => norm(m[1]))
   const lglParts = parts(lglFirst)
   return parts(vgFirst).every((p) => lglParts.includes(p))
+}
+
+const squash = (s) => String(s ?? '').trim().replace(/\s+/g, ' ')
+
+// The addressee and salutation LGL fills in itself for a constituent's current name (trial-account behaviour):
+// prefix, first, last and suffix (trailing period dropped); middle name and nickname are ignored.
+export function lglDefaultNames (c) {
+  const suffix = String(c.suffix ?? '').trim().replace(/\.+$/, '')
+  const addressee = squash([c.prefix, c.first_name, c.last_name, suffix].filter((p) => p && String(p).trim()).join(' '))
+  return { addressee, salutation: squash(c.first_name) }
+}
+
+// True when LGL's addressee and salutation are still its defaults for the current name.
+export function hasDefaultNames (c) {
+  const d = lglDefaultNames(c)
+  return squash(c.addressee) === d.addressee && squash(c.salutation) === d.salutation
 }

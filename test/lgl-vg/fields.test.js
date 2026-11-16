@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { FIELDS, lglFields, vgFields, comparable, vgPatch, mergePhones, keepsNickname } from '../../src/lgl-vg/fields.js'
+import { FIELDS, lglFields, vgFields, comparable, vgPatch, mergePhones, keepsNickname, lglDefaultNames, hasDefaultNames } from '../../src/lgl-vg/fields.js'
 
 const addr = (o = {}) => ({ id: 1, street: '12 Elm Street', city: 'Providence', state: 'RI', postal_code: '02903', is_preferred: true, not_current: false, ...o })
 const base = { id: 7, first_name: 'Jane', last_name: 'Doe' }
@@ -274,4 +274,31 @@ test('keepsNickname is false only when VG has a parenthesized part LGL lacks', (
   assert.equal(keepsNickname('Robert', 'Robert (Bob)'), false)
   assert.equal(keepsNickname('Robert (Bob)', 'Robert (Bob)'), true)
   assert.equal(keepsNickname('Rob', 'Robert'), true)
+})
+
+test('a verification rewrite of the unit designator compares the same', () => {
+  const vg = { street: '200 E Randolph St', unit: 'Apartment 5', city: 'Zzyzxford', state: 'RI', zip: '00901' }
+  const lgl = { street: '200 E Randolph St', unit: 'Fl 5', city: 'Zzyzxford', state: 'RI', zip: '00901' }
+  assert.equal(comparable('address', vg), comparable('address', lgl))
+})
+test('every USPS secondary unit word is dropped before a designator', () => {
+  for (const w of ['apt', 'apartment', 'bldg', 'building', 'dept', 'department', 'fl', 'floor', 'frnt', 'front', 'hngr', 'hangar', 'key', 'lbby', 'lobby', 'lot', 'lowr', 'lower', 'ofc', 'office', 'ph', 'penthouse', 'pier', 'rear', 'rm', 'room', 'side', 'slip', 'spc', 'space', 'stop', 'ste', 'suite', 'trlr', 'trailer', 'unit', 'uppr', 'upper']) {
+    assert.equal(comparable('address', { street: '1 Elm St', unit: `${w} 5`, city: 'Zzyzxford', state: 'RI', zip: '00901' }),
+      comparable('address', { street: '1 Elm St', unit: '# 5', city: 'Zzyzxford', state: 'RI', zip: '00901' }), w)
+  }
+})
+test('a unit word with no designator after it is kept (Rear Lot Rd is a street)', () => {
+  assert.notEqual(comparable('address', { street: '1 Rear Lot Rd', unit: null, city: 'Zzyzxford', state: 'RI', zip: '00901' }),
+    comparable('address', { street: '1 Rd', unit: null, city: 'Zzyzxford', state: 'RI', zip: '00901' }))
+})
+test('lglDefaultNames follows the trial account: suffix period dropped, prefix kept, middle and nickname ignored', () => {
+  assert.deepEqual(lglDefaultNames({ first_name: 'Jane', last_name: 'Doe' }), { addressee: 'Jane Doe', salutation: 'Jane' })
+  assert.deepEqual(lglDefaultNames({ first_name: 'John', last_name: 'Doe', suffix: 'Jr.' }), { addressee: 'John Doe Jr', salutation: 'John' })
+  assert.deepEqual(lglDefaultNames({ prefix: 'Dr.', first_name: 'Jane', middle_name: 'Q', nick_name: 'Jay', last_name: 'Doe' }), { addressee: 'Dr. Jane Doe', salutation: 'Jane' })
+})
+test('hasDefaultNames is true only when both still match the current name', () => {
+  assert.equal(hasDefaultNames({ first_name: 'Jane', last_name: 'Doe', addressee: 'Jane Doe', salutation: 'Jane' }), true)
+  assert.equal(hasDefaultNames({ first_name: 'Jane', last_name: 'Doe', addressee: 'Mrs. Jane Doe', salutation: 'Jane' }), false)
+  assert.equal(hasDefaultNames({ first_name: 'Jane', last_name: 'Doe', addressee: 'Jane Doe', salutation: 'Dear Friend' }), false)
+  assert.equal(hasDefaultNames({ first_name: 'Jane', last_name: 'Doe', addressee: ' Jane  Doe ', salutation: 'Jane' }), true)
 })
