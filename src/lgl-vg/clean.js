@@ -13,7 +13,7 @@ const LEADING_FLOOR = /^\s*(\d+(?:st|nd|rd|th)\s+(?:fl|floor))\b[,\s]*/i
 
 const ORDINAL = '(?:\\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|ground|top)'
 const TRAILING_FLOOR = new RegExp(`[,\\s]+(${ORDINAL}\\s+(?:fl|floor))\\.?\\s*$`, 'i')
-const PO_BOX = /^(?:p\.?\s*o\.?\s*box|post office box|box)\s+\w+/i
+export const PO_BOX = /^(?:p\.?\s*o\.?\s*box|post office box|box)\s+\w+/i
 const CARE_OF = /^(?:c\s*\/\s*o|care of)\b/i
 const NUMBERED = /^\d/
 

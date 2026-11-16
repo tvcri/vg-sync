@@ -94,8 +94,9 @@ function cutUnlinked(u, touched) {
 
 // The plan applyPlan takes, for the touched constituents only, with existingHolds narrowed the
 // same way (reconcileHolds closes every owned open hold it is not asked to keep) and the replan
-// applyPlan calls after a fresh read of every person.
-export function planCheck({ touched, cache, persons, memory, holds, policy, config, today }) {
+// applyPlan calls after a fresh read of every person. lglSend, writeLgl and lglWriteCounts are
+// passed to planLinked as they are.
+export function planCheck({ touched, cache, persons, memory, holds, policy, config, today, lglSend, writeLgl, lglWriteCounts }) {
   const t = new Set([...touched].map(str))
   const constituents = [...(cache?.constituents?.values() ?? [])]
   const gifts = [...(cache?.gifts?.values() ?? [])]
@@ -103,10 +104,11 @@ export function planCheck({ touched, cache, persons, memory, holds, policy, conf
 
   const linkedPersons = persons.filter((p) => p.donor && isTouched(p.donor.lglConstituentId))
   const linkedIds = new Set(linkedPersons.map((p) => str(p.donor.lglConstituentId)))
-  const refusals = holds.filter((h) => h.reason === 'vg-refused' && (h.state === 'open' || h.state === 'dismissed') && isTouched(h.lglConstituentId))
+  const refusals = holds.filter((h) => (h.reason === 'vg-refused' || h.reason === 'lgl-refused') &&
+    (h.state === 'open' || h.state === 'dismissed') && isTouched(h.lglConstituentId))
   const linked = planLinked({
     constituents: constituents.filter((c) => linkedIds.has(str(c.id))),
-    gifts, persons: linkedPersons, memory, refusals, policy, config,
+    gifts, persons: linkedPersons, memory, refusals, policy, config, lglSend, writeLgl, lglWriteCounts,
   })
 
   const unlinkedPlan = (people) => cutUnlinked(
@@ -138,18 +140,20 @@ function peopleOf(plan, { donor }) {
   const u = plan.unlinked ?? { links: [], follows: [], finishes: [], creates: [] }
   return new Set([
     ...plan.writes.filter((w) => donor || w.kind !== 'donor').map((w) => w.personId),
+    ...(plan.lglWrites ?? []).filter((w) => w.send).flatMap((w) => w.personIds), // LGL writes that will be sent
     ...[...u.links, ...u.follows, ...u.finishes].map((w) => str(w.personId)),
     ...u.creates.map((w) => `new:${w.constituentId}`),
   ])
 }
 
-// The people a check counts against the circuit breaker: field writes, links, follows, finishes
-// and creates (once per constituent). A new last gift date alone does not count.
+// The people a check counts against the circuit breaker: field writes (to VG, and to LGL when
+// sent), links, follows, finishes and creates (once per constituent). A new last gift date alone
+// does not count.
 export const breakerPeople = (plan) => peopleOf(plan, { donor: false }).size
 
-// Decision outcomes that are a change (plan.js and unlinked.js): a write, a deferred write, an
-// agreed value recorded. 'hold' counts through the hold table below; 'skip' (a donor left alone) is not.
-const CHANGE_OUTCOMES = new Set(['write-vg', 'deferred', 'record'])
+// Decision outcomes that are a change (plan.js and unlinked.js): a write (to VG or LGL), a
+// deferred write, an agreed value recorded. 'hold' counts through the hold table below; 'skip' (a donor left alone) is not.
+const CHANGE_OUTCOMES = new Set(['write-vg', 'write-lgl', 'deferred', 'record'])
 
 // True when the plan holds anything other than same: a write or deferred decision, a hold the
 // hold table would open, change, reopen or close, a memory row, or a link, follow, create or

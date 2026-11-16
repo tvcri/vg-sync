@@ -7,6 +7,7 @@ export const OWNED_REASONS = new Set([
   'never-agreed', 'both-changed', 'lgl-cleared', 'vg-cleared',
   'unclean', 'ambiguous', 'couple', 'lost-nickname', 'deceased-removed', 'phones-no-slot', 'vg-refused',
   'lgl-missing', 'no-longer-donor',
+  'po-box', 'flapping', 'lgl-refused', // step 7's LGL writes; 'addressee' is not owned: only staff close it
 ])
 
 // Step 4: holds on an unlinked constituent (no personId), and the two person-level notices it opens.

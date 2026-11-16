@@ -13,8 +13,21 @@ const have = (o = {}) => ({
 
 test('OWNED_REASONS lists the cases, guards and records', () => {
   const all = ['never-agreed', 'both-changed', 'lgl-cleared', 'vg-cleared', 'unclean', 'ambiguous', 'couple',
-    'lost-nickname', 'deceased-removed', 'phones-no-slot', 'vg-refused', 'lgl-missing', 'no-longer-donor']
+    'lost-nickname', 'deceased-removed', 'phones-no-slot', 'vg-refused', 'lgl-missing', 'no-longer-donor',
+    'po-box', 'flapping', 'lgl-refused']
   assert.deepEqual([...OWNED_REASONS].sort(), all.sort())
+})
+
+test('po-box, flapping and lgl-refused are owned; addressee is not', () => {
+  for (const reason of ['po-box', 'flapping', 'lgl-refused']) {
+    assert.ok(OWNED_REASONS.has(reason), reason)
+    // the plan no longer wants it: reconciliation closes it
+    const r = reconcileHolds([], [have({ reason })])
+    assert.deepEqual(r.patch, [{ holdId: 'h1', state: 'closed' }], reason)
+  }
+  assert.ok(!OWNED_REASONS.has('addressee'))
+  // only staff close an addressee hold
+  assert.deepEqual(reconcileHolds([], [have({ reason: 'addressee', field: 'firstName' })]).patch, [])
 })
 
 test('desired with no existing opens a new hold with only the new keys', () => {

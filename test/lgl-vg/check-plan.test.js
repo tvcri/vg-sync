@@ -7,6 +7,7 @@ import {
 import { reconcileHolds } from '../../src/lgl-vg/holds.js'
 import { unlinkedFingerprint } from '../../src/lgl-vg/match.js'
 import { parsePolicy } from '../../src/lgl-vg/policy.js'
+import { fingerprint as planFingerprint } from '../../src/lgl-vg/plan.js'
 import { FIELDS, lglFields } from '../../src/lgl-vg/fields.js'
 
 const policy = parsePolicy(readFileSync(new URL('../../policy.json', import.meta.url), 'utf8'))
@@ -41,8 +42,8 @@ const cacheOf = (constituents, gifts = constituents.map((c) => gift(c.id))) => (
   constituents: new Map(constituents.map((c) => [String(c.id), c])),
   gifts: new Map(gifts.map((g) => [String(g.id), g])),
 })
-const check = ({ touched, cache, persons = [], memory = [], holds = [] }) =>
-  planCheck({ touched: new Set(touched), cache, persons, memory, holds, policy, config, today })
+const check = ({ touched, cache, persons = [], memory = [], holds = [], ...lgl }) =>
+  planCheck({ touched: new Set(touched), cache, persons, memory, holds, policy, config, today, ...lgl })
 
 // --- mergeLglChanges ---
 
@@ -250,4 +251,43 @@ test('a skipped donor is not a change', () => {
   const p = check({ touched: ['201'], cache: cacheOf([con(201)]), persons, holds: [dismissed] })
   assert.deepEqual(p.unlinked.decisions.map((d) => d.outcome), ['skip'])
   assert.equal(foundChange(p), false)
+})
+
+// --- step 7: writes to LGL ---
+
+test('breakerPeople counts sent LGL writes', () => {
+  const c = con(101)
+  const persons = [per(7, { donor: linkTo(101), email: 'jdoe@example.org' })]
+  const args = { touched: ['101'], cache: cacheOf([c]), persons, memory: agreedAt(c, 7) }
+  const sent = check({ ...args, writeLgl: true, lglSend: () => true, lglWriteCounts: new Map() })
+  assert.deepEqual(sent.lglWrites.map((w) => [w.personIds, w.field, w.send]), [[['7'], 'email', true]])
+  assert.equal(breakerPeople(sent), 1)
+  assert.equal(sent.counts.breakerPeople, 1)
+  assert.equal(sent.counts.peopleChanged, 1)
+  // deferred: printed, not counted
+  const off = check(args)
+  assert.equal(off.lglWrites[0].send, false)
+  assert.equal(breakerPeople(off), 0)
+  assert.equal(off.counts.peopleChanged, 0)
+  // the flapping count is passed through
+  const flapping = check({ ...args, writeLgl: true, lglSend: () => true, lglWriteCounts: new Map([['7|email', 4]]) })
+  assert.deepEqual(flapping.holds.map((h) => h.reason), ['flapping'])
+})
+
+test('an lgl-refused hold on a touched constituent suppresses the same LGL write', () => {
+  const c = con(101)
+  const persons = [per(7, { donor: linkTo(101), email: 'jdoe@example.org' })]
+  const p = check({ touched: ['101'], cache: cacheOf([c]), persons, memory: agreedAt(c, 7), writeLgl: true, lglSend: () => true,
+    holds: [hold({ lglConstituentId: '101', personId: '7', field: 'email', reason: 'lgl-refused', fingerprint: planFingerprint(['email', 'jdoe@example.org']) })] })
+  assert.deepEqual(p.lglWrites, [])
+  assert.deepEqual(p.holds.map((h) => h.reason), ['lgl-refused'])
+})
+
+test('foundChange is true for a write-lgl decision', () => {
+  const c = con(101)
+  const persons = [per(7, { donor: linkTo(101), email: 'jdoe@example.org' })]
+  const p = check({ touched: ['101'], cache: cacheOf([c]), persons, memory: agreedAt(c, 7), writeLgl: true, lglSend: () => true })
+  assert.deepEqual(p.decisions.map((d) => d.outcome), ['write-lgl'])
+  assert.deepEqual([p.writes, p.agree, p.holds], [[], [], []])
+  assert.equal(foundChange(p), true)
 })
