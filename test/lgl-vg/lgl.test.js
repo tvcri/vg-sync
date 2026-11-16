@@ -290,3 +290,141 @@ test('giftsSince sends a bare date, and passes attempts through the pages', asyn
   assert.equal(u.pathname, '/api/v1/gifts/search')
   assert.equal(u.searchParams.get('q[]'), 'updated_from=2026-11-15')
 })
+
+// --- writes (step 7) ---
+const writeClient = (fetchImpl, sleeps = []) => createLglClient({ apiKey: 'k', sleep: recordSleeps(sleeps), fetchImpl })
+const throwingOnce = (then, calls) => {
+  let first = true
+  return async (url, init = {}) => {
+    calls.push({ url: new URL(url), init })
+    if (first) {
+      first = false
+      throw Object.assign(new TypeError('fetch failed'), { cause: new Error('ECONNRESET') })
+    }
+    return new Response(JSON.stringify(then), { status: 200 })
+  }
+}
+
+test('a POST that fails on the network is not retried', async () => {
+  const calls = []
+  const sleeps = []
+  const lgl = writeClient(async (url, init) => {
+    calls.push({ url, init })
+    throw new TypeError('fetch failed')
+  }, sleeps)
+  await assert.rejects(lgl.addEntry(7, 'email_addresses', { address: 'jane@example.org' }), /fetch failed/)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(sleeps, [])
+})
+
+test('a POST that times out is not retried', async () => {
+  const calls = []
+  const sleeps = []
+  const lgl = writeClient(async (url, init) => {
+    calls.push({ url, init })
+    throw Object.assign(new Error('timed out'), { name: 'TimeoutError' })
+  }, sleeps)
+  await assert.rejects(lgl.addEntry(7, 'phone_numbers', { number: '401-555-0100' }), /POST .* timed out/)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(sleeps, [])
+})
+
+test('a POST answered 429 waits and is retried', async () => {
+  const calls = []
+  const sleeps = []
+  const lgl = writeClient(
+    fakeFetch([{ status: 429, headers: { 'retry-after': '1' } }, { body: { id: 55, not_current: false, is_preferred: true } }], calls),
+    sleeps,
+  )
+  const made = await lgl.addEntry(7, 'email_addresses', { address: 'jane@example.org' })
+  assert.equal(made.id, 55)
+  assert.equal(calls.length, 2)
+  assert.deepEqual(sleeps, [1000])
+})
+
+test('a PATCH that fails on the network is retried like a read', async () => {
+  const calls = []
+  const sleeps = []
+  const lgl = writeClient(throwingOnce({ id: 9, not_current: true, is_preferred: false }, calls), sleeps)
+  const got = await lgl.patchEntry('email_addresses', 9, { not_current: true })
+  assert.equal(got.not_current, true)
+  assert.equal(calls.length, 2)
+  assert.deepEqual(sleeps, [30_000])
+})
+
+test('a write answered 422 throws with status 422, not retried', async () => {
+  const calls = []
+  const lgl = writeClient(fakeFetch([{ status: 422, body: { error: 'bad' } }], calls))
+  await assert.rejects(lgl.patchConstituent(7, { first_name: 'Jane' }), (err) => {
+    assert.equal(err.status, 422)
+    assert.notEqual(err.final, true)
+    assert.match(err.message, /LGL PATCH \/constituents\/7 → 422/)
+    return true
+  })
+  assert.equal(calls.length, 1)
+})
+
+test('a write answered 401 is final', async () => {
+  const lgl = writeClient(fakeFetch([{ status: 401, body: {} }]))
+  await assert.rejects(lgl.patchConstituent(7, {}), (err) => err.status === 401 && err.final === true)
+})
+
+test('getConstituentFull reads the record and its three lists', async () => {
+  const calls = []
+  const lgl = writeClient(
+    fakeFetch(
+      [
+        { body: { id: 7, first_name: 'Jane' } },
+        { body: { items: [{ id: 1 }], total_items: 1 } },
+        { body: { items: [{ id: 2 }, { id: 3 }], total_items: 2 } },
+        { body: { items: [], total_items: 0 } },
+      ],
+      calls,
+    ),
+  )
+  const c = await lgl.getConstituentFull(7)
+  assert.equal(calls.length, 4)
+  assert.ok(calls.every((x) => x.init.method === 'GET'))
+  assert.equal(calls[0].url.pathname, '/api/v1/constituents/7.json')
+  assert.equal(calls[0].url.search, '')
+  assert.deepEqual(calls.slice(1).map((x) => x.url.pathname), [
+    '/api/v1/constituents/7/street_addresses',
+    '/api/v1/constituents/7/email_addresses',
+    '/api/v1/constituents/7/phone_numbers',
+  ])
+  assert.ok(calls.slice(1).every((x) => x.url.searchParams.get('limit') === '100'))
+  assert.equal(c.first_name, 'Jane')
+  assert.deepEqual(c.street_addresses, [{ id: 1 }])
+  assert.deepEqual(c.email_addresses, [{ id: 2 }, { id: 3 }])
+  assert.deepEqual(c.phone_numbers, [])
+})
+
+test('an unknown entry kind is refused before any request', async () => {
+  const calls = []
+  const lgl = writeClient(fakeFetch([], calls))
+  assert.throws(() => lgl.addEntry(7, 'gifts', {}), /Unknown entry kind/)
+  assert.throws(() => lgl.patchEntry('gifts', 1, {}), /Unknown entry kind/)
+  assert.throws(() => lgl.listEntries(7, 'gifts'), /Unknown entry kind/)
+  assert.equal(calls.length, 0)
+})
+
+test('writes send JSON with the auth header', async () => {
+  const calls = []
+  const lgl = writeClient(fakeFetch([{ body: { id: 1 } }, { body: { id: 7 } }, { body: { id: 9 } }], calls))
+  await lgl.addEntry(7, 'email_addresses', { address: 'jane@example.org' })
+  await lgl.patchConstituent(7, { first_name: 'Jane' })
+  await lgl.patchEntry('phone_numbers', 9, { not_current: true })
+  const [post, patchC, patchE] = calls
+  assert.equal(post.init.method, 'POST')
+  assert.equal(post.url.pathname, '/api/v1/constituents/7/email_addresses')
+  assert.equal(post.init.body, JSON.stringify({ address: 'jane@example.org' }))
+  assert.equal(patchC.init.method, 'PATCH')
+  assert.equal(patchC.url.pathname, '/api/v1/constituents/7')
+  assert.equal(patchE.init.method, 'PATCH')
+  assert.equal(patchE.url.pathname, '/api/v1/phone_numbers/9')
+  assert.equal(patchE.init.body, JSON.stringify({ not_current: true }))
+  for (const c of calls) {
+    assert.equal(c.init.headers['Content-Type'], 'application/json')
+    assert.equal(c.init.headers.Authorization, 'Basic ' + Buffer.from('k:').toString('base64'))
+  }
+})
