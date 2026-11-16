@@ -56,13 +56,14 @@ test('an address with no city is unclean', () => {
   const r = lglFields({ ...base, street_addresses: [addr({ id: 3, city: '' })] })
   assert.equal(r.values.address, null)
   assert.equal(r.problems.address, 'unclean')
-  assert.equal(r.entryIds.address, null)
+  assert.equal(r.entryIds.address, 3) // the entry the sync read, so a repair retires it
 })
 
 test('an email without a domain is unclean', () => {
   const bad = lglFields({ ...base, email_addresses: [{ id: 1, address: 'jane@example', is_preferred: true }] })
   assert.equal(bad.values.email, null)
   assert.equal(bad.problems.email, 'unclean')
+  assert.equal(bad.entryIds.email, 1)
   const ok = lglFields({ ...base, email_addresses: [{ id: 2, address: ' jane@example.org ', is_preferred: true }] })
   assert.equal(ok.values.email, 'jane@example.org')
   assert.equal(ok.entryIds.email, 2)
@@ -222,6 +223,7 @@ test('an unclean cell keeps the phone entry id; phones is null with a problem', 
     { id: 2, number: '555-01', phone_type_name: 'Cell', is_preferred: true },
   ] })
   assert.equal(r.entryIds.phone, 1)
+  assert.equal(r.entryIds.cell, 2)
   assert.equal(r.values.phones, null)
   assert.equal(r.problems.phones, 'unclean')
 })

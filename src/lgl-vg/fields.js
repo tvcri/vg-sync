@@ -61,12 +61,13 @@ export function lglFields (c) {
     const fail = (kind) => { if (slot) slotProblems.push(kind); else problems[field] = kind }
     if (ambiguous) { fail('ambiguous'); continue }
     if (!entry) continue
+    // The entry the sync read, clean or not: a write that repairs it retires this entry.
+    entryIds[field] = entry.id
     const v = convert(entry)
     if (slot) rawSlots[field] = rawOf(entry)
     if (v == null) { fail('unclean'); if (!slot) raw[field] = rawOf(entry); continue }
     if (slot) slots[field] = v
     else values[field] = v
-    entryIds[field] = entry.id
   }
   if (slotProblems.length) {
     problems.phones = slotProblems.includes('ambiguous') ? 'ambiguous' : 'unclean'

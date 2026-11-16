@@ -59,8 +59,12 @@ function entryCalls ({ id, kind, entries, oldId, matches, body, preferred, retir
 
 function phoneCalls (id, write, constituent, read) {
   const entries = constituent.phone_numbers ?? []
-  const lglSlots = read.values.phones ?? { phone: null, cell: null }
-  const lglNumbers = new Set([lglSlots.phone, lglSlots.cell].map(phoneKey).filter(Boolean))
+  // Each slot is compared with the entry the sync read for it, clean or not (values.phones is
+  // null when either slot is unclean).
+  const readEntry = { phone: null, cell: null }
+  for (const slot of ['phone', 'cell']) readEntry[slot] = entries.find((e) => e.id === read.entryIds[slot]) ?? null
+  const readKey = (slot) => (readEntry[slot] ? phoneKey(phoneOf(readEntry[slot])) : '')
+  const lglNumbers = new Set(['phone', 'cell'].map(readKey).filter(Boolean))
   // LGL has one preferred phone per constituent; a write never moves the mark to the other type group.
   let markHeld = entries.some((e) => !e.not_current && e.is_preferred)
   const calls = []
@@ -68,12 +72,12 @@ function phoneCalls (id, write, constituent, read) {
     const key = phoneKey(write.value?.[slot])
     if (!key) continue // VG has no number here: clearing a slot is never a write
     const mobile = slot === 'cell'
-    if (write.merge ? lglNumbers.has(key) : key === phoneKey(lglSlots[slot])) continue
+    if (write.merge ? lglNumbers.has(key) : key === readKey(slot)) continue
     // A merge adds only into a type group with no current entry: a second current entry with no
     // mark would make the slot ambiguous. The plan's phones-no-slot hold lists the number left out.
     if (write.merge && entries.some((e) => !e.not_current && isMobile(e) === mobile)) continue
-    const oldId = write.merge ? null : read.entryIds[slot]
-    const old = entries.find((e) => e.id === oldId)
+    const old = write.merge ? null : readEntry[slot]
+    const oldId = old?.id ?? null
     const preferred = Boolean(old?.is_preferred) || !markHeld
     if (preferred) markHeld = true
     calls.push(...entryCalls({
@@ -88,7 +92,8 @@ function phoneCalls (id, write, constituent, read) {
 }
 
 export function buildLglCalls (write, constituent, { addresseeSetting }) {
-  const id = write.constituentId ?? constituent.id
+  const id = write.constituentId
+  if (id == null || id === '') throw new Error(`LGL write for field "${write.field}" has no constituentId`)
   const { field, value } = write
   if (NAME_KEYS[field] || field === 'deceased') return setCall(id, write, constituent, addresseeSetting)
   const read = lglFields(constituent)

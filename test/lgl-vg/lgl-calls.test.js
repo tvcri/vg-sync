@@ -214,6 +214,27 @@ test('a new email is added as a Home entry', () => {
   assert.equal(r.calls[1].path, '/email_addresses/11')
 })
 
+test('repairing an unclean phone slot retires the unclean entry and leaves the clean slot alone', () => {
+  const c = con({ phone_numbers: [ph(31, '401-555-0131', 'Home', { is_preferred: true }), ph(33, '555', 'Mobile')] })
+  const r = buildLglCalls(w({ field: 'phones', value: { phone: '401-555-0131', cell: '401-555-0150' } }), c, ifDefault)
+  assert.deepEqual(r.calls, [
+    { method: 'POST', path: '/constituents/101/phone_numbers', body: { number: '401-555-0150', phone_type_name: 'Mobile', is_preferred: false }, step: 'add', entryKind: 'phone_numbers', oldEntryId: 33 },
+    { method: 'PATCH', path: '/phone_numbers/33', body: { not_current: true }, step: 'retire', entryKind: 'phone_numbers', oldEntryId: 33 },
+  ])
+})
+
+test('repairing an unclean address retires the unclean entry', () => {
+  const c = con({ street_addresses: [{ id: 12, street: '12 Elm St', city: '', state: 'RI', zip5: '00901', is_preferred: true, not_current: false }] })
+  const r = buildLglCalls(w({ field: 'address', value: elm }), c, ifDefault)
+  assert.deepEqual(r.calls.map((x) => [x.step, x.path]), [['add', '/constituents/101/street_addresses'], ['retire', '/street_addresses/12']])
+  assert.equal(r.calls[0].oldEntryId, 12)
+})
+
+test('a write without constituentId throws', () => {
+  assert.throws(() => buildLglCalls(w({ constituentId: undefined, field: 'firstName', value: 'Janet' }), con(), ifDefault), /no constituentId/)
+  assert.throws(() => buildLglCalls(w({ constituentId: null, field: 'email', value: 'janet.doe@example.org' }), con(), ifDefault), /no constituentId/)
+})
+
 test('formatCall prints method, path and JSON body', () => {
   assert.equal(formatCall({ method: 'PATCH', path: '/street_addresses/12', body: { not_current: true }, step: 'retire' }), 'LGL PATCH /street_addresses/12 {"not_current":true}')
   assert.equal(formatCall({ method: 'POST', path: '/constituents/101/email_addresses', body: { address: 'jane@example.org' }, step: 'add' }), 'LGL POST /constituents/101/email_addresses {"address":"jane@example.org"}')
