@@ -1,4 +1,4 @@
-// Emails: a VG change waits for LGL writes (step 7); an LGL clear is held.
+// Emails: a VG change is written to LGL (step 7); an LGL clear is held.
 import { GIFT, agreeing } from '../people.js'
 
 const base = { street: '8 Copperbeech Hollow', city: 'Warwick', state: 'RI', zip: '02886' }
@@ -7,9 +7,9 @@ const ingrid = { first: 'Ingrid', last: 'Sallowmere', ...base, email: 'ingrid.sa
 
 export default [
   {
-    name: 'vg-email-change-after-agreement-is-deferred',
-    why: 'The policy file: email vg-changed is to-lgl, and to-lgl is deferred until LGL writes exist: reported, nothing written. Step 7 changes `since` and this expectation to the LGL write.',
-    since: 3,
+    name: 'vg-email-change-after-agreement-reaches-lgl',
+    why: 'The policy file: email vg-changed is to-lgl. Until step 7 this was vg-email-change-after-agreement-is-deferred (reported, nothing written); step 7 writes it: VG\'s email is added as LGL\'s preferred entry and the old one marked not current, and the next pass finds the two the same.',
+    since: 7,
     ...agreeing(hollis),
     gifts: [GIFT],
     phases: [
@@ -17,9 +17,12 @@ export default [
       {
         edit: { vg: { email: 'hollis.m@example.org' } },
         run: 'full',
-        expect: { writes: 0, deferred: 1, vg: { email: 'hollis.m@example.org' }, lgl: { email: 'hollis.merriweather@example.org' }, holds: [] },
+        expect: {
+          writes: 0, lglWrites: 1, deferred: 0, vg: { email: 'hollis.m@example.org' }, lgl: { email: 'hollis.m@example.org' },
+          lglEntries: { email_addresses: { current: 1, total: 2 } }, holds: [],
+        },
       },
-      { run: 'full', expect: { writes: 0, deferred: 1, holds: [] } },
+      { run: 'full', expect: { writes: 0, lglWrites: 0, deferred: 0, holds: [] } },
     ],
   },
   {

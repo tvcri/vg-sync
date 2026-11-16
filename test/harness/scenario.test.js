@@ -28,14 +28,14 @@ test('loadScenarios flattens, tags the area and rejects bad input', () => {
 
 test('selectScenarios filters by name, area, step and overnight', () => {
   const list = loadScenarios([
-    { area: 'names', default: [ok('a'), ok('late', { since: 7 }), ok('night', { overnight: true })] },
+    { area: 'names', default: [ok('a'), ok('late', { since: 8 }), ok('night', { overnight: true })] },
     { area: 'phones', default: [ok('b')] },
   ])
   let r = selectScenarios(list, {})
   assert.deepEqual(r.selected.map((s) => s.name), ['a', 'b'])
-  assert.deepEqual(r.skipped, [{ name: 'late', reason: 'since step 7' }, { name: 'night', reason: 'overnight' }])
+  assert.deepEqual(r.skipped, [{ name: 'late', reason: 'since step 8' }, { name: 'night', reason: 'overnight' }])
   assert.deepEqual(selectScenarios(list, { overnight: true }).selected.map((s) => s.name), ['a', 'night', 'b'])
-  assert.deepEqual(selectScenarios(list, { step: 7 }).selected.map((s) => s.name), ['a', 'late', 'b'])
+  assert.deepEqual(selectScenarios(list, { step: 8 }).selected.map((s) => s.name), ['a', 'late', 'b'])
   assert.deepEqual(selectScenarios(list, { step: 3 }).selected.map((s) => s.name), ['a', 'b'])
   assert.deepEqual(selectScenarios(list, { only: 'phones' }).selected.map((s) => s.name), ['b'])
   assert.deepEqual(selectScenarios(list, { only: 'a' }).selected.map((s) => s.name), ['a'])
@@ -77,9 +77,17 @@ test('runAlone is true or a group name', () => {
   assert.throws(() => loadScenarios([{ area: 'x', default: [ok('a', { runAlone: 1 })] }]), /runAlone/)
 })
 
-test('step defaults to 6', () => {
-  const list = loadScenarios([{ area: 'x', default: [ok('five', { since: 5 }), ok('six', { since: 6 }), ok('seven', { since: 7 })] }])
+test('step defaults to 7', () => {
+  const list = loadScenarios([{ area: 'x', default: [ok('six', { since: 6 }), ok('seven', { since: 7 }), ok('eight', { since: 8 })] }])
   const r = selectScenarios(list)
-  assert.deepEqual(r.selected.map((s) => s.name), ['five', 'six'])
-  assert.deepEqual(r.skipped, [{ name: 'seven', reason: 'since step 7' }])
+  assert.deepEqual(r.selected.map((s) => s.name), ['six', 'seven'])
+  assert.deepEqual(r.skipped, [{ name: 'eight', reason: 'since step 8' }])
+})
+
+test('phase env is allowed only on runAlone scenarios, as a map of names to strings', () => {
+  const phases = [{ run: 'full', env: { LGL_WRITE_ALLOW: '1' } }]
+  assert.equal(loadScenarios([{ area: 'x', default: [ok('a', { runAlone: true, phases })] }]).length, 1)
+  assert.throws(() => loadScenarios([{ area: 'x', default: [ok('a', { phases })] }]), /"a" phase 1: env.*runAlone/)
+  assert.throws(() => loadScenarios([{ area: 'x', default: [ok('a', { runAlone: true, phases: [{ env: { X: 1 } }] })] }]), /env/)
+  assert.throws(() => loadScenarios([{ area: 'x', default: [ok('a', { runAlone: true, phases: [{ env: ['X'] }] })] }]), /env/)
 })

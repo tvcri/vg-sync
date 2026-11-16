@@ -119,3 +119,13 @@ test('an API error names the method, path and status', async () => {
   const staff = make([tok(), { status: 422, body: 'bad' }])
   await assert.rejects(staff.patchPerson('9', {}), /PATCH \/persons\/9 → 422/)
 })
+
+test('appendSyncLog posts the rows; getSyncLog reads one person\'s rows by outcome', async () => {
+  const calls = []
+  const staff = make([tok(), { status: 201, body: { appended: 1 } }, { body: [{ logId: '1' }] }], calls)
+  assert.deepEqual(await staff.appendSyncLog([{ lglConstituentId: '5', outcome: 'written' }]), { appended: 1 })
+  assert.deepEqual(await staff.getSyncLog({ personId: 9, outcome: 'written' }), [{ logId: '1' }])
+  const seen = calls.slice(1).map((c) => `${c.init.method} ${c.url.pathname}${c.url.search}`)
+  assert.deepEqual(seen, ['POST /api/sync/log', 'GET /api/sync/log?personId=9&outcome=written&limit=100'])
+  assert.deepEqual(JSON.parse(calls[1].init.body), [{ lglConstituentId: '5', outcome: 'written' }])
+})

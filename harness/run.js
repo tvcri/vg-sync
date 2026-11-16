@@ -3,7 +3,7 @@
 // against the LGL trial account and the dev VG, one real service pass per phase.
 //
 //   npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only]
-//   (--step defaults to 6)
+//   (--step defaults to 7)
 //
 // Every run reseeds unless --resume. Records are left in place after a run for
 // inspection; the next run wipes them first. planRun is pure and unit-tested;
@@ -35,7 +35,7 @@ const asList = (v) => (v === undefined || v === null ? [] : [].concat(v))
 // --- Pure parts -------------------------------------------------------------
 
 export function parseArgs (argv) {
-  const opts = { only: null, step: 6, overnight: false, resume: false, guardsOnly: false }
+  const opts = { only: null, step: 7, overnight: false, resume: false, guardsOnly: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--overnight') opts.overnight = true
@@ -89,9 +89,16 @@ export function planRun ({ selected, phaseCount: count }) {
       }
       const runs = [...new Set(scenarios.map((s) => s.phases[p]?.run).filter((r) => r !== undefined))]
       if (runs.length > 1) throw new Error(`Scenarios ${scenarios.map((s) => s.name).join(', ')} name different runs for phase ${p + 1}: ${runs.join(', ')}`)
+      const env = {}
+      for (const s of scenarios) {
+        for (const [k, v] of Object.entries(s.phases[p]?.env ?? {})) {
+          if (k in env && env[k] !== v) throw new Error(`Scenarios ${scenarios.map((x) => x.name).join(', ')} set env ${k} differently for phase ${p + 1}`)
+          env[k] = v
+        }
+      }
       pass++
       const expectFail = scenarios.some((s) => s.phases[p]?.expect?.passFails === true)
-      steps.push({ kind: 'pass', pass, phase: p, run: runs[0] ?? 'full', args, expectFail })
+      steps.push({ kind: 'pass', pass, phase: p, run: runs[0] ?? 'full', args, env, expectFail })
       for (const s of scenarios) steps.push({ kind: 'check', scenario: s.name, phase: p, pass })
     }
   }
@@ -166,14 +173,21 @@ export function passArgv ({ command, args }) {
   return ['src/lgl-vg/main.js', ...command, '--env', ENV_FILE, '--write-vg', ...lgl, ...args]
 }
 
+// The service's environment for one pass: ours without the variables the example file names (so the env
+// file wins), then the phase's env on top (a variable already set wins over the file).
+export function passEnv (baseEnv, exampleText, phaseEnv = {}) {
+  return { ...serviceEnv(baseEnv, exampleText), ...phaseEnv }
+}
+
 // Runs one pass (or one change check) as a child process; its output goes to the screen and to the log.
-function runPass ({ dir, args, log, run = 'full', command = ['--once', run, '--out', dir], logName = `${basename(dir)}.log` }) {
+function runPass ({ dir, args, env = {}, log, run = 'full', command = ['--once', run, '--out', dir], logName = `${basename(dir)}.log` }) {
   const exampleText = readFileSync(join(REPO, '.env.harness.example'), 'utf8')
   const argv = passArgv({ command, args })
+  if (Object.keys(env).length) log(`  with ${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')}`)
   log(`$ node ${argv.join(' ')}`)
   return new Promise((resolve, reject) => {
     const file = createWriteStream(join(dir, logName))
-    const child = spawn(process.execPath, argv, { cwd: REPO, env: serviceEnv(process.env, exampleText), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(process.execPath, argv, { cwd: REPO, env: passEnv(process.env, exampleText, env), stdio: ['ignore', 'pipe', 'pipe'] })
     child.stdout.on('data', (d) => { process.stdout.write(d); file.write(d) })
     child.stderr.on('data', (d) => { process.stderr.write(d); file.write(d) })
     child.on('error', (err) => { file.end(); reject(err) })
@@ -362,7 +376,7 @@ export async function main (argv, { log = console.log } = {}) {
       await mkdir(dir, { recursive: true })
       log(`\n== Pass ${step.pass} (phase ${step.phase + 1}, ${step.run})`)
       const passStartedAt = new Date().toISOString()
-      const code = await runPass({ dir, args: step.args, log, run: step.run })
+      const code = await runPass({ dir, args: step.args, env: step.env, log, run: step.run })
       if (step.expectFail) log(`Pass ${step.pass} was expected to fail; it exited ${code}`)
       else if (code !== 0) passFailures.push({ pass: step.pass, code })
       const decisions = await readDecisions(dir)
@@ -378,10 +392,16 @@ export async function main (argv, { log = console.log } = {}) {
       const lglConstituent = await getConstituentOrNull(lglWriter, entry.constituentId)
       if (lglConstituent) Object.assign(lglConstituent, lglDonor(s, step.phase, today))
       const rows = scenarioRows(entry, pass)
+      // expect.lglLog: the people's written LGL log rows, newest first (read only when expected).
+      let lglLog = []
+      if (s.phases[step.phase]?.expect?.lglLog) {
+        for (const p of vgPersons.filter(Boolean)) lglLog.push(...await vgStaff.getSyncLog({ personId: p.personId, outcome: 'written' }))
+        lglLog = lglLog.sort((a, b) => Number(b.logId) - Number(a.logId))
+      }
       const failures = checkScenario({
         scenario: s, phaseIndex: step.phase, vgPersons, // a person not found is null, which checkScenario reports as missing
         lglConstituent, holds: rows.holds, decisions: rows.decisions, passStartedAt: pass.passStartedAt,
-        passExitCode: pass.code, today,
+        passExitCode: pass.code, today, lglLog,
         constituentIds: Object.fromEntries(Object.entries(state.scenarios).map(([n, e]) => [n, e.constituentId])),
       })
       for (const f of failures) (results[s.name] ??= []).push(f)

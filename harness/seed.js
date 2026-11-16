@@ -124,15 +124,30 @@ export async function wipeLgl({ lglWriter, log = () => {} }) {
 
 export async function applyEdit(edit, stateEntry, { lglWriter, vgStaff, env = {}, today }) {
   const { constituentId, personIds } = stateEntry
-  if (edit.vg) {
+  // One person's edit, or a list of them (a couple whose partners both change in one phase).
+  for (const one of asList(edit.vg)) {
     // lastGiftDate sets the person's donor row (as staff could), the rest is a person PATCH.
-    const { person = 0, lastGiftDate, ...body } = edit.vg
+    const { person = 0, lastGiftDate, ...body } = one
     if (personIds[person] === undefined) throw new Error(`edit.vg: this scenario has no person ${person}`)
     if (body.deceasedDate !== undefined) body.deceasedDate = dateOrOffset(body.deceasedDate, today)
     if (Object.keys(body).length) await vgStaff.patchPerson(personIds[person], body)
     if (lastGiftDate !== undefined) {
       await vgStaff.putDonor(personIds[person], { lglConstituentId: constituentId, lastGiftDate: dateOrOffset(lastGiftDate, today) })
     }
+  }
+  if (edit.syncLog) {
+    // `runs` LGL writes of one field for the first person, as the service logs them, each in a run of
+    // its own: the flapping guard counts distinct runs. The run ids are invented (no run row; sync_log
+    // has no foreign key), far above the dev database's own.
+    const { field, runs } = edit.syncLog
+    if (!Number.isInteger(runs) || runs < 1) throw new Error('edit.syncLog: runs must be a whole number of at least 1')
+    const base = 900_000_000 + Math.floor(Math.random() * 1_000_000) * 10
+    const rows = Array.from({ length: runs }, (_, i) => ({
+      runId: String(base + i), lglConstituentId: String(constituentId), personId: String(personIds[0]), field, case: 'vg-changed',
+      request: { method: 'PATCH', path: `/constituents/${constituentId}`, body: null },
+      outcome: 'written', responseStatus: 200, note: 'harness: an earlier write, for the flapping guard',
+    }))
+    await vgStaff.appendSyncLog(rows)
   }
   if (edit.lgl) {
     const { entries, gifts, delete: del, ...rest } = edit.lgl

@@ -9,13 +9,19 @@ const delphine = { first: 'Delphine', last: 'Okonkwo-Reyes', ...base, phone: '40
 export default [
   {
     name: 'lgl-only-phone-fills-empty-vg-slot',
-    why: 'Customer question 3: a number only LGL has is copied to VG (phones never-agreed is merge). VG\'s own cell stays; its LGL half is deferred until step 7.',
-    since: 3,
+    why: 'Customer question 3: a number only LGL has is copied to VG (phones never-agreed is merge). VG\'s own cell goes the other way: until step 7 that half was deferred; step 7 adds it to LGL as a Mobile entry (a merge retires nothing), so both sides hold both numbers and the next pass finds them first-match.',
+    since: 7,
     ...agreeing(priya, { lgl: { phone_numbers: [{ number: '401-555-0202', type: 'Home' }] } }),
     gifts: [GIFT],
     phases: [
-      { run: 'full', expect: { writes: 1, deferred: 1, vg: { phones: { phone: '401-555-0202', cell: '401-555-0201' } }, holds: [] } },
-      { run: 'full', expect: { writes: 0, vg: { phones: { phone: '401-555-0202', cell: '401-555-0201' } }, holds: [] } },
+      {
+        run: 'full',
+        expect: {
+          writes: 1, lglWrites: 1, deferred: 0, vg: { phones: { phone: '401-555-0202', cell: '401-555-0201' } },
+          lgl: { phones: { phone: '401-555-0202', cell: '401-555-0201' } }, lglEntries: { phone_numbers: { current: 2, total: 2 } }, holds: [],
+        },
+      },
+      { run: 'full', expect: { writes: 0, lglWrites: 0, deferred: 0, vg: { phones: { phone: '401-555-0202', cell: '401-555-0201' } }, holds: [] } },
     ],
   },
   {

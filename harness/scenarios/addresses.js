@@ -1,10 +1,11 @@
-// Addresses: an LGL change after agreement reaches VG; an unclean LGL address is never copied.
+// Addresses: an LGL change after agreement reaches VG; an unclean LGL address is never copied, and VG's
+// address replaces it in LGL (step 7).
 // Invented streets, so LGL's verification sweep stamps them and rewrites nothing.
 import { GIFT, address, agreeing } from '../people.js'
 
 const marisol = { first: 'Marisol', last: 'Fenwhistle', street: '31 Marrowbend Road', city: 'Warwick', state: 'RI', zip: '02886', phone: '401-555-0141' }
 const moved = { street: '77 Brindlecomb Way', city: 'Cranston', state: 'RI', zip: '02920' }
-const ottilie = { first: 'Ottilie', last: 'Pellinore', street: '6 Cindertop Court', city: 'Warwick', state: 'RI', zip: '02888' }
+const ottilie = { first: 'Ottilie', last: 'Pellinore', street: '6 Cindertop Court', city: 'Zzyzxford', state: 'RI', zip: '00901' }
 const osgood = { first: 'Osgood', last: 'Pellinore', street: '5 Cindertop Court', city: 'Warwick', state: 'RI', zip: '02888' }
 
 export default [
@@ -48,13 +49,19 @@ export default [
   },
   {
     name: 'unclean-lgl-city-never-agreed-goes-to-lgl',
-    why: 'The policy file, Guards (Unclean): the guard blocks to-vg only, and a copy from VG that would repair LGL goes ahead. A never-agreed address is to-lgl (customer question 2), deferred until step 7: no hold, no write, VG unchanged.',
-    since: 3,
-    ...agreeing(ottilie, { lgl: { street_addresses: [{ street: ottilie.street, city: 'Warwick 3', state: 'RI', postal_code: ottilie.zip }] } }),
+    why: 'The policy file, Guards (Unclean): the guard blocks to-vg only, and a copy from VG that would repair LGL goes ahead. A never-agreed address is to-lgl (customer question 2). Until step 7 it was deferred (no hold, no write); step 7 writes VG\'s address as LGL\'s preferred entry and marks the unclean entry it read not current. In the invented town Zzyzxford since step 7, so LGL\'s verification sweep leaves the written address alone.',
+    since: 7,
+    ...agreeing(ottilie, { lgl: { street_addresses: [{ street: ottilie.street, city: 'Zzyzxford 3', state: 'RI', postal_code: ottilie.zip }] } }),
     gifts: [GIFT],
     phases: [
-      { run: 'full', expect: { writes: 0, deferred: 1, vg: { address: address(ottilie) }, holds: [] } },
-      { run: 'full', expect: { writes: 0, deferred: 1, vg: { address: address(ottilie) }, holds: [] } },
+      {
+        run: 'full',
+        expect: {
+          writes: 0, lglWrites: 1, deferred: 0, vg: { address: address(ottilie) }, lgl: { address: address(ottilie) },
+          lglEntries: { street_addresses: { current: 1, total: 2 } }, holds: [],
+        },
+      },
+      { run: 'full', expect: { writes: 0, lglWrites: 0, deferred: 0, vg: { address: address(ottilie) }, holds: [] } },
     ],
   },
 ]

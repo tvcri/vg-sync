@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { planRun, parseArgs, lglDonor, scenarioRows, passArgv } from '../../harness/run.js'
+import { planRun, parseArgs, lglDonor, scenarioRows, passArgv, passEnv } from '../../harness/run.js'
 
 const scen = (name, n, extra = {}) => ({ name, phases: Array.from({ length: n }, () => ({ expect: { writes: 0 } })), ...extra })
 const kinds = (steps) => steps.map((s) => s.kind)
@@ -59,7 +59,7 @@ test('phase args from the lockstep group are merged once', () => {
 })
 
 test('parseArgs reads the flags', () => {
-  assert.deepEqual(parseArgs([]), { only: null, step: 6, overnight: false, resume: false, guardsOnly: false })
+  assert.deepEqual(parseArgs([]), { only: null, step: 7, overnight: false, resume: false, guardsOnly: false })
   const o = parseArgs(['--only', 'smoke', '--only', 'names', '--step', '4', '--overnight', '--resume', '--guards-only'])
   assert.deepEqual(o, { only: ['smoke', 'names'], step: 4, overnight: true, resume: true, guardsOnly: true })
   assert.throws(() => parseArgs(['--step', 'x']), /--step/)
@@ -172,8 +172,8 @@ test('planRun rejects a group whose scenarios name different runs for one phase'
   assert.throws(() => planRun({ selected: [a, b] }), /phase 1.*lgl-check.*vg-check/)
 })
 
-test('parseArgs: --step defaults to 6', () => {
-  assert.equal(parseArgs([]).step, 6)
+test('parseArgs: --step defaults to 7', () => {
+  assert.equal(parseArgs([]).step, 7)
 })
 
 test('a pass runs with --write-vg and --write-lgl, then the phase args', () => {
@@ -184,4 +184,18 @@ test('a pass runs with --write-vg and --write-lgl, then the phase args', () => {
 test('seed-import runs with --write-vg but not --write-lgl', () => {
   const argv = passArgv({ command: ['seed-import', '--file', 'f'], args: [] })
   assert.deepEqual(argv, ['src/lgl-vg/main.js', 'seed-import', '--file', 'f', '--env', '.env.harness', '--write-vg'])
+})
+
+test('planRun puts the phase env on the pass step, empty when none', () => {
+  const s = { name: 'e', runAlone: true, phases: [{ run: 'full' }, { run: 'full', env: { LGL_WRITE_ALLOW: '1' } }] }
+  const passes = planRun({ selected: [s] }).filter((x) => x.kind === 'pass')
+  assert.deepEqual(passes.map((p) => p.env), [{}, { LGL_WRITE_ALLOW: '1' }])
+  const a = { name: 'a', runAlone: 'g', phases: [{ env: { X: '1' } }] }
+  const b = { name: 'b', runAlone: 'g', phases: [{ env: { X: '2' } }] }
+  assert.throws(() => planRun({ selected: [a, b] }), /env X/)
+})
+
+test('passEnv: the service env without the example file\'s names, then the phase env on top', () => {
+  const env = passEnv({ PATH: '/bin', LGL_WRITE_ALLOW: 'all', OTHER: 'x' }, 'LGL_WRITE_ALLOW=\n# OTHER=\n', { LGL_WRITE_ALLOW: '1' })
+  assert.deepEqual(env, { PATH: '/bin', LGL_WRITE_ALLOW: '1' })
 })

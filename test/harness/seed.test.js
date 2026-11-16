@@ -137,3 +137,29 @@ test('empty id overrides fall back to the lookup', async () => {
   assert.match(JSON.stringify(gift), /F-LOOKED/)
   assert.match(JSON.stringify(gift), /P-LOOKED/)
 })
+
+test('applyEdit vg as a list edits each partner in one phase', async () => {
+  const st = { constituentId: 5, personIds: ['1', '2'] }
+  const f = fakes()
+  await applyEdit({ vg: [{ street: '1 A St' }, { person: 1, street: '1 A St' }] }, st, { ...f, env, today: TODAY })
+  assert.deepEqual(f.calls, [['patchPerson', '1', { street: '1 A St' }], ['patchPerson', '2', { street: '1 A St' }]])
+})
+
+test('applyEdit syncLog appends written rows for the person and field, one per invented run', async () => {
+  const st = { constituentId: 5, personIds: ['1', '2'] }
+  const f = fakes()
+  const rows = []
+  f.vgStaff.appendSyncLog = async (r) => { rows.push(...r); return { appended: r.length } }
+  await applyEdit({ syncLog: { field: 'email', runs: 3 } }, st, { ...f, env, today: TODAY })
+  assert.equal(rows.length, 3)
+  assert.equal(new Set(rows.map((r) => r.runId)).size, 3)
+  for (const r of rows) {
+    assert.equal(r.lglConstituentId, '5')
+    assert.equal(r.personId, '1')
+    assert.equal(r.field, 'email')
+    assert.equal(r.outcome, 'written')
+    assert.match(r.runId, /^\d+$/)
+    assert.equal(typeof r.request.method, 'string')
+  }
+  await assert.rejects(applyEdit({ syncLog: { field: 'email', runs: 0 } }, st, { ...f, env, today: TODAY }), /runs/)
+})

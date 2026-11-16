@@ -3,7 +3,7 @@
 const SCENARIO_KEYS = new Set(['name', 'why', 'since', 'vg', 'lgl', 'gifts', 'link', 'couple', 'phases', 'overnight', 'runAlone', 'known', 'importDecision'])
 // The import review's decisions a scenario can start with (loaded by the real seed-import command).
 export const IMPORT_DECISIONS = new Set(['staff-skip', 'horizon-skip', 'hold'])
-const PHASE_KEYS = new Set(['run', 'edit', 'wait', 'args', 'expect', 'known'])
+const PHASE_KEYS = new Set(['run', 'edit', 'wait', 'args', 'env', 'expect', 'known'])
 const REQUIRED = ['name', 'why', 'since', 'phases']
 // What a phase's pass runs: the full pass, or one change check (step 6). A check reads the cursor the
 // scenario's own earlier full pass set, so a check phase belongs only to a scenario that runs alone.
@@ -55,6 +55,14 @@ export function loadScenarios (modules) {
         // Phase args and an expected pass failure change the pass for everyone in it, so they belong
         // only to a scenario that runs alone.
         if (p.args !== undefined && !s.runAlone) throw new Error(`Scenario "${s.name}" phase ${i + 1}: args are allowed only on a runAlone scenario`)
+        // Phase env: variables the pass's service sees on top of the env file (a variable already set
+        // wins over the file), e.g. a narrower LGL_WRITE_ALLOW.
+        if (p.env !== undefined) {
+          if (p.env === null || typeof p.env !== 'object' || Array.isArray(p.env) || Object.values(p.env).some((v) => typeof v !== 'string')) {
+            throw new Error(`Scenario "${s.name}" phase ${i + 1}: env must map variable names to strings`)
+          }
+          if (!s.runAlone) throw new Error(`Scenario "${s.name}" phase ${i + 1}: env is allowed only on a runAlone scenario`)
+        }
         if (p.expect?.passFails !== undefined) {
           if (p.expect.passFails !== true) throw new Error(`Scenario "${s.name}" phase ${i + 1}: passFails must be true when given`)
           if (!s.runAlone) throw new Error(`Scenario "${s.name}" phase ${i + 1}: passFails is allowed only on a runAlone scenario`)
@@ -68,7 +76,7 @@ export function loadScenarios (modules) {
   return list
 }
 
-export function selectScenarios (list, { only, step = 6, overnight = false } = {}) {
+export function selectScenarios (list, { only, step = 7, overnight = false } = {}) {
   const wanted = only == null ? null : [].concat(only)
   const selected = []
   const skipped = []

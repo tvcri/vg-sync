@@ -61,9 +61,9 @@ export default [
     ],
   },
   {
-    name: 'vg-edit-is-deferred-by-vg-check',
-    why: 'Step 6, the VG check: an email edited in VG after agreement (vg-changed) is planned to-lgl and recorded deferred. Nothing is written to either side until step 7.',
-    since: 6,
+    name: 'vg-edit-reaches-lgl-by-vg-check',
+    why: 'The VG check: an email edited in VG after agreement (vg-changed) is planned to-lgl. In step 6 it was vg-edit-is-deferred-by-vg-check (recorded deferred, nothing written); step 7 writes it to LGL on the VG check, without a full pass, and the next full pass finds the two the same.',
+    since: 7,
     runAlone: true,
     ...agreeing(vgEdit),
     gifts: [GIFT],
@@ -72,20 +72,24 @@ export default [
       {
         edit: { vg: { email: 'p.ashwinder@example.org' } },
         run: 'vg-check',
-        expect: { deferred: 1, writes: 0, vg: { email: 'p.ashwinder@example.org' }, lgl: { email: vgEdit.email }, holds: [] },
+        expect: {
+          writes: 0, lglWrites: 1, deferred: 0, vg: { email: 'p.ashwinder@example.org' }, lgl: { email: 'p.ashwinder@example.org' },
+          lglEntries: { email_addresses: { current: 1, total: 2 } }, holds: [],
+        },
       },
+      { run: 'full', expect: { writes: 0, lglWrites: 0, deferred: 0, holds: [] } },
     ],
   },
   {
     name: 'check-leaves-untouched-hold-open',
-    why: 'Step 6, holds in a check: an open hold the check re-decides unchanged stays open and is not a change, while the same check applies another pair\'s LGL edit. The hold is a never-agreed first name from the seed (policy.json plans both-changed to-lgl, which is deferred in step 6, not held). By hand, the check\'s window re-reads this pair too (seeded minutes before the full pass), so it is touched, not left alone; that a check passes on only the holds of the constituents it touched rests on the unit tests. Runs with check-leaves-untouched-hold-open-edited, whose LGL edit is what the check finds.',
+    why: 'Step 6, holds in a check: an open hold the check re-decides unchanged stays open and is not a change, while the same check applies another pair\'s LGL edit. The hold is a never-agreed first name from the seed (policy.json plans both-changed to-lgl: deferred in step 6, written to LGL since step 7, never held); the check sends nothing to LGL (lglWrites 0, deferred 0). By hand, the check\'s window re-reads this pair too (seeded minutes before the full pass), so it is touched, not left alone; that a check passes on only the holds of the constituents it touched rests on the unit tests. Runs with check-leaves-untouched-hold-open-edited, whose LGL edit is what the check finds.',
     since: 6,
     runAlone: 'check-leaves-untouched-hold-open',
     ...agreeing(holdPair, { lgl: { first_name: 'Tamsyn' } }),
     gifts: [GIFT],
     phases: [
       { run: 'full', expect: { writes: 0, vg: { firstName: 'Tamsin' }, holds: held } },
-      { run: 'lgl-check', expect: { writes: 0, vg: { firstName: 'Tamsin' }, holds: held } },
+      { run: 'lgl-check', expect: { writes: 0, lglWrites: 0, deferred: 0, vg: { firstName: 'Tamsin' }, holds: held } },
     ],
   },
   {

@@ -77,6 +77,12 @@ export function createVgStaff({ apiUrl, oidcUrl, clientId, clientSecret, scope =
       const q = new URLSearchParams(states.map((s) => ['state', s]))
       return get(`/sync/holds?${q}`)
     },
+    // The LGL write log: the flapping scenario seeds written rows; expect.lglLog reads a person's rows.
+    appendSyncLog: (rows) => request('POST', '/sync/log', rows),
+    getSyncLog({ personId, outcome, limit = 100 }) {
+      const q = new URLSearchParams({ personId: String(personId), outcome, limit: String(limit) })
+      return get(`/sync/log?${q}`)
+    },
     dismissHold: (holdId, { dismissalKind, note } = {}) =>
       request('POST', `/sync/holds/${holdId}/dismissal`, { dismissalKind, ...(note === undefined ? {} : { note }) }),
     // Acknowledges the current privacy rules if the account owes it.

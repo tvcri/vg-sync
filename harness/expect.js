@@ -14,13 +14,15 @@ const holdKey = (h) => `${h.field}|${h.reason}|${h.state ?? 'open'}`
 //   (expect.writes, .lglWrites, .deferred and .records count outcomes write-vg, write-lgl, deferred and record).
 // expect.lgl.addressee and .salutation compare plainly; expect.lglEntries { <kind>: { current, total } }
 //   counts the entries on the constituent's lists as getConstituent read them back (current: not not_current).
+// lglLog: the scenario's people's written sync_log rows, newest first. expect.lglLog { <field>: <old value> }
+//   compares the newest row for each field's oldValue (LGL's value before the write) in comparable form.
 // passStartedAt: ISO string; a hold with firstSeenAt >= it was opened in this pass.
 // phaseIndex is 0-based; one past the scenario's phases is checked as undisturbed.
 // passExitCode: the pass's exit code; with expect.passFails a zero exit is the failure.
 // today ('YYYY-MM-DD'): resolves a relative date ('-5d') in an expected lastGiftDate or deceased date.
 // constituentIds: scenario name -> its LGL constituent id, for expect.vg.donorOf (the scenario whose
 //   constituent the person must be linked to).
-export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent, holds = [], decisions = [], passStartedAt, passExitCode, today, constituentIds = {} }) {
+export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent, holds = [], decisions = [], lglLog = [], passStartedAt, passExitCode, today, constituentIds = {} }) {
   if (!passStartedAt) throw new Error('checkScenario needs passStartedAt (an ISO string)')
   const when = (v) => {
     if (typeof v !== 'string' || !/^[+-]\d+[dy]$/.test(v)) return v
@@ -96,6 +98,14 @@ export function checkScenario ({ scenario, phaseIndex, vgPersons, lglConstituent
         if (want.current !== undefined) compare(`lglEntries.${kind}.current`, want.current, list.filter((e) => !e.not_current).length)
         if (want.total !== undefined) compare(`lglEntries.${kind}.total`, want.total, list.length)
       }
+    }
+  }
+
+  if (expect.lglLog !== undefined) {
+    for (const [field, want] of Object.entries(expect.lglLog)) {
+      const row = lglLog.find((r) => r.field === field && r.outcome === 'written')
+      if (!row) fail(`lglLog.${field}`, want, 'no written row')
+      else compareField(`lglLog.${field}`, field, want, row.oldValue)
     }
   }
 

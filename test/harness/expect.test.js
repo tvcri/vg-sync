@@ -159,3 +159,13 @@ test('lglEntries with no constituent fails as missing', () => {
   const f = run([{ expect: { lglEntries: { email_addresses: { current: 1, total: 1 } } } }])
   assert.equal(f[0].what, 'lglEntries')
 })
+
+test('lglLog compares the newest written row\'s old value per field, in comparable form', () => {
+  const lglLog = [
+    { field: 'firstName', oldValue: 'ysolde', newValue: 'Jane', outcome: 'written' },
+    { field: 'firstName', oldValue: 'Older', newValue: 'Ysolde', outcome: 'written' },
+  ]
+  assert.deepEqual(run([{ expect: { lglLog: { firstName: 'Ysolde' } } }], { lglLog }), [])
+  const f = run([{ expect: { lglLog: { firstName: 'Older', email: 'a@example.org' } } }], { lglLog })
+  assert.deepEqual(f.map((x) => [x.what, x.expected, x.found]), [['lglLog.firstName', 'Older', 'ysolde'], ['lglLog.email', 'a@example.org', 'no written row']])
+})
