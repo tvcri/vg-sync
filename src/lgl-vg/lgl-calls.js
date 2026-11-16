@@ -67,12 +67,15 @@ function phoneCalls (id, write, constituent, read) {
   for (const slot of ['phone', 'cell']) {
     const key = phoneKey(write.value?.[slot])
     if (!key) continue // VG has no number here: clearing a slot is never a write
+    const mobile = slot === 'cell'
     if (write.merge ? lglNumbers.has(key) : key === phoneKey(lglSlots[slot])) continue
+    // A merge adds only into a type group with no current entry: a second current entry with no
+    // mark would make the slot ambiguous. The plan's phones-no-slot hold lists the number left out.
+    if (write.merge && entries.some((e) => !e.not_current && isMobile(e) === mobile)) continue
     const oldId = write.merge ? null : read.entryIds[slot]
     const old = entries.find((e) => e.id === oldId)
     const preferred = Boolean(old?.is_preferred) || !markHeld
     if (preferred) markHeld = true
-    const mobile = slot === 'cell'
     calls.push(...entryCalls({
       id, kind: 'phone_numbers', entries, oldId,
       matches: (e) => isMobile(e) === mobile && phoneKey(phoneOf(e)) === key,

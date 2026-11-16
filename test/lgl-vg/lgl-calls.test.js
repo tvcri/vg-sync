@@ -176,11 +176,22 @@ test('a not-current phone of the same type group is revived with the preferred r
 
 test('merge adds VG-only numbers and retires nothing', () => {
   const c = con({ phone_numbers: [ph(31, '401-555-0131', 'Home', { is_preferred: true })] })
-  // VG's phone slot holds a number LGL lacks; VG's cell is LGL's Home number, already on file
-  const r = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0140', cell: '401-555-0131' } }), c, ifDefault)
+  // VG's cell holds a number LGL lacks (no current Mobile in LGL); VG's phone is LGL's Home number, already on file
+  const r = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0131', cell: '401-555-0150' } }), c, ifDefault)
   assert.deepEqual(r.calls, [
-    { method: 'POST', path: '/constituents/101/phone_numbers', body: { number: '401-555-0140', phone_type_name: 'Home', is_preferred: false }, step: 'add', entryKind: 'phone_numbers', oldEntryId: null },
+    { method: 'POST', path: '/constituents/101/phone_numbers', body: { number: '401-555-0150', phone_type_name: 'Mobile', is_preferred: false }, step: 'add', entryKind: 'phone_numbers', oldEntryId: null },
   ])
+})
+
+test('merge leaves a VG-only number out when LGL has a current entry of that type', () => {
+  // LGL's only current Home number is unmarked (the mark is on the Mobile); VG's phone is a different number
+  const c = con({ phone_numbers: [ph(31, '401-555-0131', 'Home'), ph(33, '401-555-0133', 'Mobile', { is_preferred: true })] })
+  const r = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0140', cell: '401-555-0133' } }), c, ifDefault)
+  assert.deepEqual(r.calls, [])
+  // a not-current entry of the type does not count: the number is added
+  const d = con({ phone_numbers: [ph(31, '401-555-0131', 'Home', { not_current: true }), ph(33, '401-555-0133', 'Mobile', { is_preferred: true })] })
+  const s = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0140', cell: '401-555-0133' } }), d, ifDefault)
+  assert.deepEqual(s.calls.map((x) => [x.step, x.body.number, x.body.is_preferred]), [['add', '401-555-0140', false]])
 })
 
 test('an email equal in other capitals is revived, not added', () => {
