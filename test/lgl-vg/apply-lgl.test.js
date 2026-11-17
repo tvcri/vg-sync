@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { applyLglWrites } from '../../src/lgl-vg/apply-lgl.js'
-import { comparable } from '../../src/lgl-vg/fields.js'
+import { comparable, lglFields, lglExpect } from '../../src/lgl-vg/fields.js'
 import { fingerprint } from '../../src/lgl-vg/plan.js'
 
 // An LGL constituent as getConstituentFull returns it: the record and its three entry lists.
@@ -205,7 +205,7 @@ test('a 400 and a 404 are refusals too', async () => {
   }
 })
 
-test('a 500 after retries fails the run', async () => {
+test('a 500 after retries fails the run, and the failed call is logged too', async () => {
   const lgl = fakeLgl({
     answer: (method, path, body) => {
       if (path === '/email_addresses/11') throw lglError(500)
@@ -215,8 +215,115 @@ test('a 500 after retries fails the run', async () => {
   const vg = fakeVg()
   await assert.rejects(run([emailW(), nameW()], { lgl, vg }), /500/)
   assert.deepEqual(sent(lgl).map((c) => c[1]), ['/constituents/101/email_addresses', '/email_addresses/11']) // nothing after
-  // the call that went through is still recorded before the run fails
-  assert.deepEqual(vg.appends.map((rows) => rows.map((x) => [x.request.method, x.outcome])), [[['POST', 'written']]])
+  // the call that went through and the one that failed (LGL may have applied it) are recorded before the run fails
+  assert.deepEqual(vg.appends.map((rows) => rows.map((x) => [x.request.method, x.outcome, x.responseStatus, x.lglEntryId])), [
+    [['POST', 'written', 200, '905'], ['PATCH', 'failed', 500, '11']],
+  ])
+  assert.match(vg.appends[0][1].note, /500/)
+})
+
+test('a POST that fails without a response is logged failed, with no status, and opens no lgl-incomplete hold', async () => {
+  const timeout = new Error('LGL POST timed out')
+  const lgl = fakeLgl({ answer: () => { throw timeout } })
+  const vg = fakeVg()
+  const e = await run([emailW()], { lgl, vg }).catch((x) => x)
+  assert.equal(e, timeout)
+  assert.deepEqual(sent(lgl).map((c) => c[0]), ['POST']) // never retried here
+  assert.deepEqual(vg.appends[0].map((x) => [x.request.method, x.outcome, x.responseStatus, x.lglEntryId, x.note]), [
+    ['POST', 'failed', null, null, 'LGL POST timed out'],
+  ])
+  assert.deepEqual(e.partial.holds, [])
+})
+
+test('a field whose calls stop part way opens an lgl-incomplete hold naming the entry left current', async () => {
+  const lgl = fakeLgl({
+    answer: (method, path, body) => {
+      if (path === '/email_addresses/11') throw lglError(500)
+      return method === 'POST' ? { id: 905, not_current: false } : { ...body }
+    },
+  })
+  const vg = fakeVg()
+  const e = await run([emailW({ personIds: ['7', '8'] })], { lgl, vg }).catch((x) => x)
+  assert.match(e.message, /500/)
+  assert.deepEqual(vg.appends[0].map((x) => [x.personId, x.request.method, x.outcome]), [
+    ['7', 'POST', 'written'], ['8', 'POST', 'written'], ['7', 'PATCH', 'failed'], ['8', 'PATCH', 'failed'],
+  ])
+  const fp = fingerprint(['lgl-incomplete', 'email', 'new@example.org'])
+  assert.deepEqual(e.partial.holds.map((h) => [h.lglConstituentId, h.personId, h.field, h.reason, h.fingerprint]), [
+    ['101', '7', 'email', 'lgl-incomplete', fp], ['101', '8', 'email', 'lgl-incomplete', fp],
+  ])
+  assert.deepEqual(e.partial.holds[0].detail, {
+    sent: [{ method: 'POST', path: '/constituents/101/email_addresses', body: { address: 'new@example.org', email_type_name: 'Home', is_preferred: true } }],
+    failed: { method: 'PATCH', path: '/email_addresses/11', body: { not_current: true }, error: e.message },
+    oldEntryId: '11',
+  })
+  assert.deepEqual(e.partial.agree, [])
+})
+
+test('a failed run hands back what it gathered: memory and holds of the fields done', async () => {
+  const records = { 101: con({ addressee: 'Mrs. J. Doe' }), 102: con({ id: 102 }) }
+  const lgl = fakeLgl({
+    records,
+    answer: (method, path, body) => {
+      if (path.startsWith('/constituents/102')) throw lglError(500)
+      return method === 'POST' ? { id: 905, not_current: false } : { ...body }
+    },
+  })
+  const w101 = nameW({ field: 'lastName', value: 'Roe', expect: comparable('lastName', 'Doe') })
+  const e = await run([w101, emailW({ constituentId: '102', personIds: ['8'] })], { lgl }).catch((x) => x)
+  assert.match(e.message, /500/)
+  assert.deepEqual(e.partial.agree, [{ personId: '7', field: 'lastName', lglConstituentId: '101', value: 'Roe', lglEntryId: null }])
+  assert.deepEqual(e.partial.holds.map((h) => [h.lglConstituentId, h.personId, h.reason]), [['101', '7', 'addressee']])
+  assert.deepEqual(e.partial.counts, { written: 1, stale: 0, refused: 0 })
+})
+
+test('a failed log append on a failed run is named in the run\'s error', async () => {
+  const lgl = fakeLgl({
+    answer: (method, path, body) => {
+      if (path === '/email_addresses/11') throw lglError(500)
+      return method === 'POST' ? { id: 905, not_current: false } : { ...body }
+    },
+  })
+  const vg = fakeVg({ appendErr: new Error('VG POST /sync/log → 503') })
+  const e = await run([emailW({ personIds: ['7', '8'] })], { lgl, vg }).catch((x) => x)
+  assert.match(e.message, /^LGL call → 500: invalid value; log append also failed: VG POST \/sync\/log → 503 — 2 call\(s\) sent but not logged$/)
+  assert.equal(e.logError.message, 'VG POST /sync/log → 503')
+})
+
+test('two writes to the same constituent and field in one run are refused before anything is sent', async () => {
+  const records = { 101: con(), 102: con({ id: 102 }) }
+  const lgl = fakeLgl({ records })
+  await assert.rejects(
+    run([emailW({ constituentId: '102' }), emailW(), nameW(), emailW({ value: 'other@example.org', personIds: ['8'] })], { lgl }),
+    /constituent 101.*two writes.*"email"/,
+  )
+  assert.ok(!lgl.calls.some((c) => c[1] === '101' || String(c[1]).includes('/101')))
+})
+
+test('an unclean value changed to another unclean value since the plan is stale', async () => {
+  const planned = con({ email_addresses: [{ id: 11, address: 'not an email', is_preferred: true, not_current: false }] })
+  const now = con({ email_addresses: [{ id: 11, address: 'still not an email', is_preferred: true, not_current: false }] })
+  const w = emailW({ expect: lglExpect(lglFields(planned), 'email'), case: 'both-changed' })
+  const lgl = fakeLgl({ records: { 101: now } })
+  const { r } = await run([w], { lgl })
+  assert.deepEqual(sent(lgl), [])
+  assert.deepEqual(r.counts, { written: 0, stale: 1, refused: 0 })
+})
+
+test('phones: the clean slot edited while the other slot is unclean is stale', async () => {
+  const phones = (home) => con({ phone_numbers: [
+    { id: 31, number: home, phone_type_name: 'Home', is_preferred: true, not_current: false },
+    { id: 32, number: '555-01', phone_type_name: 'Mobile', is_preferred: false, not_current: false },
+  ] })
+  const w = {
+    kind: 'lgl', constituentId: '101', personIds: ['7'], field: 'phones', case: 'both-changed',
+    value: { phone: '401-555-0199', cell: '401-555-0188' }, expect: lglExpect(lglFields(phones('401-555-0101')), 'phones'),
+    fingerprint: 'x', merge: false, send: true,
+  }
+  const lgl = fakeLgl({ records: { 101: phones('401-555-0102') } })
+  const { r } = await run([w], { lgl })
+  assert.deepEqual(sent(lgl), [])
+  assert.deepEqual(r.counts, { written: 0, stale: 1, refused: 0 })
 })
 
 test('every call sent is logged in one append per constituent, with LGL\'s old value', async () => {
@@ -239,7 +346,7 @@ test('every call sent is logged in one append per constituent, with LGL\'s old v
 
 test('an unclean LGL value is logged as LGL stored it', async () => {
   const record = con({ email_addresses: [{ id: 11, address: 'not an email', is_preferred: true, not_current: false }] })
-  const { vg } = await run([emailW({ expect: '', case: 'both-changed' })], { lgl: fakeLgl({ records: { 101: record } }) })
+  const { vg } = await run([emailW({ expect: lglExpect(lglFields(record), 'email'), case: 'both-changed' })], { lgl: fakeLgl({ records: { 101: record } }) })
   assert.deepEqual(vg.appends[0].map((x) => [x.oldValue, x.lglEntryId]), [['not an email', '900'], ['not an email', '11']])
 })
 

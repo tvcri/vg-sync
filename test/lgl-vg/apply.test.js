@@ -466,3 +466,41 @@ test('applyPlan stopped before the LGL writes sends none of them', async () => {
   assert.ok(!names(vg).some((n) => n.startsWith('lgl.')))
   assert.deepEqual(r.counts.lgl, { written: 0, stale: 0, refused: 0 })
 })
+
+test('applyPlan failing in the LGL writes saves the memory and opens the new holds gathered first', async () => {
+  const vg = withLog(fake())
+  const lgl = fakeLglInto(vg)
+  // 101's addressee is hand-written: its name write leaves it, an addressee hold; 102's write fails.
+  lgl.getConstituentFull = async (id) => ({ ...lglCon(), id: Number(id), addressee: id === '101' ? 'Mrs. J. Doe' : 'Jane Doe' })
+  lgl.addEntry = async () => { throw Object.assign(new Error('LGL → 500: down'), { status: 500 }) }
+  const existing = { holdId: '33', lglConstituentId: '101', personId: '8', field: 'email', reason: 'couple', fingerprint: 'q', detail: {}, state: 'open' }
+  const plan = {
+    ...emptyPlan, writes: [oneField('7', 'fa')], agree: [agreeRow('9', 'email')],
+    lglWrites: [
+      lglEmailW({ field: 'lastName', value: 'Roe', expect: comparable('lastName', 'Doe') }),
+      lglEmailW({ constituentId: '102', personIds: ['8'] }),
+    ],
+  }
+  await assert.rejects(
+    applyPlan(plan, { vg, lgl, runId: '42', policy: { setting: () => 'if-default' }, existingHolds: [existing] }),
+    /500: down/,
+  )
+  assert.deepEqual(vg.calls.find((c) => c[0] === 'putSyncFields')[1], [
+    agreeRow('9', 'email'), agreeRow('7', 'firstName'),
+    { personId: '7', field: 'lastName', lglConstituentId: '101', value: 'Roe', lglEntryId: null },
+  ])
+  const created = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
+  assert.deepEqual(created.map((h) => [h.lglConstituentId, h.personId, h.field, h.reason]), [['101', '7', 'lastName', 'addressee']])
+  assert.ok(!names(vg).includes('patchSyncHolds')) // nothing closed or reopened
+})
+
+test('applyPlan failing part way through a field opens its lgl-incomplete hold', async () => {
+  const vg = withLog(fake())
+  const lgl = fakeLglInto(vg)
+  lgl.patchEntry = async () => { throw Object.assign(new Error('LGL → 500: down'), { status: 500 }) }
+  await assert.rejects(applyPlan({ ...emptyPlan, lglWrites: [lglEmailW()] }, { vg, lgl, runId: '42', existingHolds: [] }), /500: down/)
+  const logged = vg.calls.find((c) => c[0] === 'appendSyncLog')[1]
+  assert.deepEqual(logged.map((x) => [x.request.method, x.outcome]), [['POST', 'written'], ['PATCH', 'failed']])
+  const created = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
+  assert.deepEqual(created.map((h) => [h.personId, h.field, h.reason, h.detail.oldEntryId]), [['7', 'email', 'lgl-incomplete', '11']])
+})

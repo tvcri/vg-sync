@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { planLinked } from '../../src/lgl-vg/plan.js'
 import { reconcileHolds } from '../../src/lgl-vg/holds.js'
 import { parsePolicy } from '../../src/lgl-vg/policy.js'
-import { FIELDS, lglFields, comparable } from '../../src/lgl-vg/fields.js'
+import { FIELDS, lglFields, comparable, lglExpect } from '../../src/lgl-vg/fields.js'
 
 const policyText = readFileSync(new URL('../../policy.json', import.meta.url), 'utf8')
 const policy = parsePolicy(policyText)
@@ -679,4 +679,29 @@ test('people changed counts LGL writes that will be sent, not deferred ones', ()
   // a VG write and a sent LGL write for the same person: one person
   const both = plan({ constituents: [con({ first_name: 'Janet' })], persons, memory, ...on })
   assert.deepEqual([both.writes.length, both.lglWrites.length, both.counts.peopleChanged], [1, 1, 1])
+})
+
+test('an unclean LGL value is expected as stored: a change to another unclean value gives another expectation', () => {
+  const addr = (city) => con({ street_addresses: [{ id: 12, street: '12 Elm St', city, state: 'RI', zip5: '99999', is_preferred: true }] })
+  const expectFor = (c) => plan({ constituents: [c], persons: [per({ detail: { street: '40 Oak Ave' } })], memory: agreedAt(con()), ...on }).lglWrites[0].expect
+  const a = expectFor(addr('Springfield 2'))
+  const b = expectFor(addr('Springfield 3'))
+  assert.notEqual(a, '')
+  assert.notEqual(a, b)
+  assert.equal(a, lglExpect(lglFields(addr('Springfield 2')), 'address'))
+})
+
+test('phones with one unclean slot: an edit of the clean slot gives another expectation', () => {
+  const phones = (home) => con({ phone_numbers: [
+    { id: 13, number: home, phone_type_name: 'Home', is_preferred: true },
+    { id: 14, number: '555-01', phone_type_name: 'Mobile' },
+  ] })
+  const expectFor = (c) => plan({
+    constituents: [c], persons: [per({ phone: { phone: '401-555-0199', cell: '401-555-0188' } })],
+    memory: [...agreedAt(con()).filter((r) => r.field !== 'phones'), mem('phones', { phone: '401-555-0101', cell: null })], ...on,
+  }).lglWrites.find((w) => w.field === 'phones').expect
+  const a = expectFor(phones('401-555-0101'))
+  const b = expectFor(phones('401-555-0102'))
+  assert.notEqual(a, '')
+  assert.notEqual(a, b)
 })

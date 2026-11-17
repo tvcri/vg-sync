@@ -4,7 +4,7 @@
 // LGL), memory rows and holds.
 import { createHash } from 'node:crypto'
 import { classifyDonors } from './donors.js'
-import { FIELDS, lglFields, vgFields, comparable, vgPatch, mergePhones, keepsNickname } from './fields.js'
+import { FIELDS, lglFields, vgFields, comparable, lglExpect, vgPatch, mergePhones, keepsNickname } from './fields.js'
 import { compareField } from './compare.js'
 import { PO_BOX, splitStreet, stateCode } from './clean.js'
 import { buildLglCalls, formatCall } from './lgl-calls.js'
@@ -163,7 +163,7 @@ export function planLinked({
     }
     const write = {
       kind: 'lgl', constituentId: key, personIds: rows.map((x) => x.dec.personId), field: f, case: kase,
-      value, expect: comparable(f, lgl.values[f]), fingerprint: fpWrite, merge,
+      value, expect: lglExpect(lgl, f), fingerprint: fpWrite, merge,
     }
     const { calls } = buildLglCalls(write, c, { addresseeSetting })
     if (!calls.length) {

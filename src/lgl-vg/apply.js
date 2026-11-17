@@ -11,7 +11,9 @@
 // opens the new holds its writes produced, but closes and reopens nothing: reconciliation compares
 // against the whole plan, and the next pass reconciles everything.
 // LGL writes (plan.lglWrites marked send, step 7) follow the donor writes when an LGL client is
-// given: apply-lgl.js sends them; their memory and holds join the rest.
+// given: apply-lgl.js sends them; their memory and holds join the rest. When they fail the pass, the
+// memory and new holds gathered so far are saved as on a stop (an addressee or lgl-incomplete hold
+// is never found again by a later plan), and then the pass fails with the original error.
 import { vgFields, comparable } from './fields.js'
 import { reconcileHolds } from './holds.js'
 import { applyLglWrites } from './apply-lgl.js'
@@ -115,10 +117,28 @@ export async function applyPlan(plan, {
     note(w.personId, w.constituentId, 'lastGiftDate', 'written')
   }
 
+  // Only the holds the writes done produced, and only the new ones: nothing is closed or reopened.
+  const saveDone = async (holds) => {
+    if (agree.length) counts.memoryUpserted = await vg.putSyncFields(agree)
+    const { open } = reconcileHolds(holds, existingHolds)
+    counts.holds = { opened: open.length, seen: 0, changed: 0, reopened: 0, closed: 0, stillDismissed: 0 }
+    if (open.length) await vg.createSyncHolds(open)
+  }
+
   const lglWrites = (plan.lglWrites ?? []).filter((w) => w.send)
-  const l = lgl && lglWrites.length && !stopped
-    ? await applyLglWrites(lglWrites, { lgl, vg, runId, policy, log, signal, attempts: lglAttempts })
-    : { counts: counts.lgl, agree: [], holds: [], stopped }
+  let l = { counts: counts.lgl, agree: [], holds: [], stopped }
+  if (lgl && lglWrites.length && !stopped) {
+    try {
+      l = await applyLglWrites(lglWrites, { lgl, vg, runId, policy, log, signal, attempts: lglAttempts })
+    } catch (e) {
+      const partial = e?.partial ?? { agree: [], holds: [] }
+      agree.push(...partial.agree)
+      await saveDone([...refusalHolds, ...partial.holds]).catch((saveError) => {
+        if (e && typeof e === 'object') e.message = `${e.message}; saving memory and holds also failed: ${saveError?.message ?? saveError}`
+      })
+      throw e
+    }
+  }
   counts.lgl = l.counts
   agree.push(...l.agree)
   stopped = l.stopped
@@ -129,15 +149,12 @@ export async function applyPlan(plan, {
   if (u.townMissing) counts.townMissing += u.townMissing
   stopped = u.stopped
 
-  if (agree.length) counts.memoryUpserted = await vg.putSyncFields(agree)
-
   if (stopped) {
-    // Only the holds the writes done produced, and only the new ones: nothing is closed or reopened.
-    const { open } = reconcileHolds([...refusalHolds, ...l.holds, ...u.holds], existingHolds)
-    counts.holds = { opened: open.length, seen: 0, changed: 0, reopened: 0, closed: 0, stillDismissed: 0 }
-    if (open.length) await vg.createSyncHolds(open)
+    await saveDone([...refusalHolds, ...l.holds, ...u.holds])
     return { counts, stopped }
   }
+
+  if (agree.length) counts.memoryUpserted = await vg.putSyncFields(agree)
 
   const desired = [...plan.holds, ...refusalHolds, ...l.holds, ...(plan.unlinked?.holds ?? []), ...u.holds]
   const { open, patch, counts: holdCounts } = reconcileHolds(desired, existingHolds)

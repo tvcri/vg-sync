@@ -4,9 +4,13 @@
 // call sent. A field's calls stop at its first refusal (400, 404, 422, or an added or revived entry
 // LGL stored as not current), which opens an lgl-refused hold; the constituent's other fields go on.
 // A 404 on a retire is not a refusal: the entry is already gone, and the field is written.
-// Any other failure fails the run, after logging the calls already sent. A stop (signal aborted) is
-// checked between constituents: the one in hand finishes its calls and its log append.
-import { lglFields, comparable } from './fields.js'
+// Any other failure fails the run, after logging the calls already sent and the one that failed
+// (outcome 'failed': LGL may have applied it). A field left part way (a call answered, a later one
+// not) opens an lgl-incomplete hold: the entry the sync read may still be current beside the new one.
+// The failed run's error carries what it gathered (e.partial: agree, holds, counts) for apply.js to
+// save. A stop (signal aborted) is checked between constituents: the one in hand finishes its calls
+// and its log append. Two writes to the same constituent and field fail the run before any is sent.
+import { lglFields, comparable, lglExpect } from './fields.js'
 import { buildLglCalls } from './lgl-calls.js'
 import { fingerprint } from './plan.js'
 
@@ -54,31 +58,38 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
   const groups = new Map()
   for (const w of writes) {
     const key = String(w.constituentId)
-    groups.set(key, [...(groups.get(key) ?? []), w])
+    const group = groups.get(key) ?? []
+    // Both would be sent from the same fresh read: the second would add the same entry again.
+    if (group.some((x) => x.field === w.field)) {
+      throw new Error(`LGL writes for constituent ${key}: two writes to field "${w.field}" in one run`)
+    }
+    groups.set(key, [...group, w])
   }
 
-  for (const [id, group] of groups) {
-    if (aborted(signal)) return { counts, agree, holds, stopped: true }
+  // One constituent: a fresh read, then each of its fields in turn, then one log append.
+  const applyGroup = async (id, group) => {
     let fresh
     try {
       fresh = await lgl.getConstituentFull(id, opts)
     } catch (e) {
       if (e?.status !== 404) throw e
       for (const w of group) note(w, 'stale', { note: 'constituent not found' }) // the next full pass sees it missing
-      continue
+      return
     }
     const read = lglFields(fresh)
     const rows = []
+    let callsLogged = 0
 
     // One field: stale check, its calls in order, its memory and holds. Returns nothing; a failure
     // that is not a refusal throws.
     const applyField = async (w) => {
       const { field } = w
-      if (comparable(field, read.values[field]) !== w.expect) return note(w, 'stale')
+      if (lglExpect(read, field) !== w.expect) return note(w, 'stale')
       const { calls, addressee } = buildLglCalls(w, fresh, { addresseeSetting })
       if (!calls.length) return note(w, 'stale', { note: 'no calls' })
       const oldValue = read.problems[field] === 'unclean' ? read.raw[field] : read.values[field]
       const logCall = (call, lglEntryId, outcome, responseStatus, message) => {
+        callsLogged++
         for (const personId of w.personIds) {
           rows.push({
             runId, lglConstituentId: id, personId: String(personId), field, case: w.case,
@@ -96,6 +107,18 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
         note(w, 'refused', { note: message })
       }
 
+      // A failure part way, after `done` calls were answered: the field's later calls are not sent,
+      // so the entry the next call would have retired may be left current. Staff finish it in LGL.
+      let done = 0
+      const incomplete = (failed, e) => {
+        if (done === 0 || done >= calls.length) return
+        holdEach(w, 'lgl-incomplete', fingerprint(['lgl-incomplete', field, w.value]), {
+          sent: calls.slice(0, done).map(({ method, path, body }) => ({ method, path, body })),
+          failed: { method: failed.method, path: failed.path, body: failed.body, error: e?.message ?? String(e) },
+          oldEntryId: calls[done].oldEntryId == null ? null : String(calls[done].oldEntryId),
+        })
+      }
+
       let entryWritten = null
       for (const call of calls) {
         let res
@@ -105,9 +128,14 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           // A retire of an entry LGL no longer has (its daily dedup deletes entries) is done already.
           if (call.step === 'retire' && e?.status === 404) {
             logCall(call, entryIdOf(call, null), 'written', 404, 'already gone')
+            done++
             continue
           }
-          if (!isRefusal(e)) throw e
+          if (!isRefusal(e)) {
+            logCall(call, entryIdOf(call, null), 'failed', e?.status ?? null, e?.message ?? String(e))
+            incomplete(call, e)
+            throw e
+          }
           return refuse(call, call.step === 'add' ? null : entryIdOf(call, null), e.status, e.message)
         }
         const entryId = entryIdOf(call, res)
@@ -118,12 +146,15 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
             current = await took(id, call, res, entryId)
           } catch (e) {
             logCall(call, entryId, 'written', OK, 'not checked: the entry list could not be read') // it was sent
+            done++
+            incomplete(call, e)
             throw e
           }
           if (!current) return refuse(call, entryId, OK, NOT_CURRENT)
         }
         if (call.step === 'add' || call.step === 'revive') entryWritten = entryId
         logCall(call, entryId, 'written', OK, null)
+        done++
       }
       note(w, 'written')
       // A merge records no memory: the next run reads both sides and finds first-match if they agree.
@@ -147,11 +178,29 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
       for (const w of group) await applyField(w)
     } catch (e) {
       // The calls already sent are recorded before the run fails; the error that failed it is kept.
-      if (rows.length) await vg.appendSyncLog(rows).catch((logError) => { e.logError = logError })
+      if (rows.length) {
+        await vg.appendSyncLog(rows).catch((logError) => {
+          e.logError = logError
+          // Carried in the message, so the PASS FAILED / CHECK FAILED line names it.
+          e.message = `${e.message}; log append also failed: ${logError?.message ?? logError} — ${callsLogged} call(s) sent but not logged`
+        })
+      }
       throw e
     }
     // A failed append fails the run: a write must not go unrecorded. It is never re-sent.
     if (rows.length) await vg.appendSyncLog(rows)
+  }
+
+  try {
+    for (const [id, group] of groups) {
+      if (aborted(signal)) return { counts, agree, holds, stopped: true }
+      await applyGroup(id, group)
+    }
+  } catch (e) {
+    // What the run gathered before it failed, for apply.js to save: memory, and holds (an addressee
+    // or lgl-incomplete hold is never found again by a later plan).
+    if (e && typeof e === 'object') e.partial = { counts, agree, holds }
+    throw e
   }
   return { counts, agree, holds, stopped: false }
 }

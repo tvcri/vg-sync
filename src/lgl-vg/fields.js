@@ -218,3 +218,11 @@ export function hasDefaultNames (c) {
   const d = lglDefaultNames(c)
   return squash(c.addressee) === d.addressee && squash(c.salutation) === d.salutation
 }
+
+// LGL's value for `field` as a stale check compares it: the comparable form, or for a value that
+// failed cleaning (whose comparable form is '') the value as LGL stored it, so an edit from one
+// unclean value to another, or of a clean phone slot beside an unclean one, is seen. `read` is
+// lglFields' result; the plan and apply-lgl.js both use this, so both sides compute it alike.
+export const lglExpect = (read, field) => (read.problems[field] === 'unclean'
+  ? `unclean:${JSON.stringify(read.raw[field])}`
+  : comparable(field, read.values[field]))
