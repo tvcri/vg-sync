@@ -5,7 +5,8 @@ and Mailchimp for Village Common of Rhode Island.
 
 The LGL ↔ VG sync is built; the VG → Mailchimp part is not. A reference to
 every command, option, variable and output line is in
-[`docs/vg-sync.1.md`](docs/vg-sync.1.md). `CLAUDE.md` says where the related
+[`docs/vg-sync.1.md`](docs/vg-sync.1.md). The rules file is described in
+[`docs/policy.json.5.md`](docs/policy.json.5.md). `CLAUDE.md` says where the related
 projects live; `docs/context-2026-11-11.md` is the founding brief.
 
 ## Running the report

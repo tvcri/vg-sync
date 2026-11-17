@@ -174,7 +174,7 @@ Counts on `PASS OK` and `CHECK OK`: `people` changed, VG `writes`,
 
 `policy.json`
 : The customer's rules: an action per field and case, record rules, settings
-  (`couple-lgl-changed`, `lgl-addressee`).
+  (`couple-lgl-changed`, `lgl-addressee`). See policy.json(5).
 
 VG tables written (through VG's API): `sync_field` (agreed values),
 `sync_hold` (holds), `sync_run` (one row per write run, with counts and
@@ -232,7 +232,7 @@ node src/lgl-vg/main.js --once full --write-vg --write-lgl --env .env.harness
 
 ## SEE ALSO
 
-`README.md`; the sync design,
+policy.json(5) (`docs/policy.json.5.md`); `README.md`; the sync design,
 `docs/superpowers/specs/2026-11-11-lgl-vg-sync-design.md`; LGL writes,
 `docs/superpowers/specs/2026-11-16-lgl-vg-step7-lgl-writes-design.md`;
 `docs/handoff-2026-11-16-go-live.md`; `docs/handoff-2026-11-17-holds-ui.md`.
