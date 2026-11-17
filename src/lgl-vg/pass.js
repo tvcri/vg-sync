@@ -166,11 +166,12 @@ export async function runFullPass({
         `links=${uc.link + uc.follow + uc.finish}`, `creates=${uc.create}`, `unlinks=${uc.unlink}`,
         'holdsOpened=0', 'holdsClosed=0', `holdsOpen=${openRead}`, `holdsPlanned=${plan.counts.holds + unlinked.holds.length}`,
         ...(trips ? ['breaker=would-trip'] : [])]
-    // LGL's keys follow the others. Dry: the writes that would be sent.
+    // LGL's keys follow the others. Dry: the writes a run with LGL writes on would send (the allow-list
+    // applies; --write-lgl needs --write-vg, so a dry run never sends any itself).
     const al = a?.lgl
     parts.push(...(writeVg
       ? [`lgl-writes=${al.written}`, `lgl-stale=${al.stale}`, `lgl-refused=${al.refused}`]
-      : [`lgl-writes=${plan.counts.lglWritesPlanned}`, 'lgl-stale=0', 'lgl-refused=0']))
+      : [`lgl-writes=${plan.lglWrites.filter((w) => allowedForLgl(config, w.constituentId)).length}`, 'lgl-stale=0', 'lgl-refused=0']))
     stdout(`PASS OK full ${mode} people=${plan.counts.peopleChanged} ${parts.join(' ')}`)
     result = {
       outcome: 'ok', retryable: false, error: null,

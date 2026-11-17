@@ -144,12 +144,31 @@ Deferred minors from the step 7 reviews:
   an id; the harness's lglLog sorts by `Number(logId)`; one known stale
   scenario's noise remains.
 
+Fixed after a code review of the branch (2026-11-17):
+
+- A revive answered 404 (the entry deduped away) no longer opens an
+  `lgl-refused` hold that blocks the write for good: the field is stale and
+  the next run adds it.
+- A refusal after the field's add went through (a retire refused) opens
+  `lgl-incomplete`, so the old entry left current reaches staff.
+- An add answered without an entry id fails the run instead of logging a sent
+  add as refused. A failed check read names the read in the hold, not the add.
+- The flapping log is read per person the guard looks up, in every mode: a
+  run with LGL writes off no longer closes flapping holds, a check with
+  nothing for LGL reads no log, and the 5000-row limit is per person.
+- The dry run's `lgl-writes=` is the count a run with LGL writes on would send.
+- Shared helpers (`squash`, `phoneKey`, `ENTRY_FIELDS`, `isRefusal`,
+  `aborted`) are defined once.
+
+Parked from that review: `getConstituentFull` reads all three entry lists
+for every constituent written, even a name-only write (four GETs; LGL's
+~300-request budget is reached sooner on a big backlog; the 429 pause still
+applies, so it is slower, not wrong).
+
 Parked minors from the final review:
 
 - The log is appended once per constituent, not per call: a SIGKILL during a
   429 wait can lose that constituent's log rows for calls already sent.
-- The dry run's `lgl-writes=` count is always 0; for the true count use the
-  write run's breaker message (go-live task 5).
 - VG is not re-read before an LGL write; a VG edit in between settles on the
   next run.
 - A note for staff: an `lgl-incomplete` hold needs a person to retire the old

@@ -166,10 +166,13 @@ record `writeLgl`, and its counts the LGL writes, stale fields and refusals.
 
 `PASS OK` and `CHECK OK` end with `lgl-writes=<n> lgl-stale=<n>
 lgl-refused=<n>`, after the keys above. On a dry run `lgl-writes` is the
-number of writes that would be sent, and the other two are 0.
+number of writes a run with LGL writes on would send (the allow-list
+applies), and the other two are 0.
 
 A field written to LGL by more than three runs in thirty days is held
-(`flapping`). The count is read from `sync_log`; if that read reaches its
+(`flapping`). The count is read from `sync_log`, in every mode, for the
+people the guard looks up only (one read each, after a first plan); a run
+with nothing to write to LGL reads no log. If one person's read reaches its
 limit of 5000 rows the run fails without writing, since it cannot count.
 
 ### Go-live order

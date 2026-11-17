@@ -490,7 +490,7 @@ test('full pass: dry with an allow-list prints calls and sends nothing', async (
   const d = decisionsOf(f).find((x) => x.field === 'email')
   assert.deepEqual([d.outcome, d.note], ['deferred', 'write-lgl off'])
   assert.ok(d.calls.length >= 1, 'the decision carries the calls it would make')
-  assert.match(f.out.at(-1), /deferred=1 .* lgl-writes=0 lgl-stale=0 lgl-refused=0$/)
+  assert.match(f.out.at(-1), /deferred=1 .* lgl-writes=1 lgl-stale=0 lgl-refused=0$/)
 
   // writing LGL on but VG off (a dry pass): what would be sent is counted, nothing is sent
   const g = fakes({ w: emailWorld(1) })

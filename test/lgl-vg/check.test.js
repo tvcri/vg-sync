@@ -537,7 +537,7 @@ test('vg-check: dry, the LGL write is deferred and its calls are in the decision
   const d = lines(f.files[0]).find((x) => x.field === 'email')
   assert.deepEqual([d.outcome, d.note], ['deferred', 'write-lgl off'])
   assert.ok(d.calls.length >= 1)
-  assert.equal(f.out.at(-1), 'CHECK OK vg-check dry-run people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=0 lgl-stale=0 lgl-refused=0')
+  assert.equal(f.out.at(-1), 'CHECK OK vg-check dry-run people=0 writes=0 deferred=1 links=0 creates=0 holdsOpened=0 holdsClosed=0 lgl-writes=1 lgl-stale=0 lgl-refused=0')
 })
 
 test('lgl-check: the sync\'s own write comes back as same and writes nothing', async () => {

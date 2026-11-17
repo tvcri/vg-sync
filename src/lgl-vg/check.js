@@ -246,10 +246,11 @@ export async function runCheck({
       : [`writes=${planDecisions.filter((d) => d.outcome === 'write-vg').length}`, `deferred=${plan.counts.deferred}`,
         `links=${uc.link + uc.follow + uc.finish}`, `creates=${uc.create}`,
         `holdsOpened=${holdPreview.opened}`, `holdsClosed=${holdPreview.closed}`, ...(trips ? ['breaker=would-trip'] : [])]
-    // LGL's keys follow the others. Dry: the writes that would be sent.
+    // LGL's keys follow the others. Dry: the writes a run with LGL writes on would send (the allow-list
+    // applies; --write-lgl needs --write-vg, so a dry run never sends any itself).
     parts.push(...(writeVg
       ? [`lgl-writes=${a.lgl.written}`, `lgl-stale=${a.lgl.stale}`, `lgl-refused=${a.lgl.refused}`]
-      : [`lgl-writes=${plan.counts.lglWritesPlanned}`, 'lgl-stale=0', 'lgl-refused=0']))
+      : [`lgl-writes=${plan.lglWrites.filter((w) => allowedForLgl(config, w.constituentId)).length}`, 'lgl-stale=0', 'lgl-refused=0']))
     stdout(`CHECK OK ${kind} ${mode} people=${plan.counts.peopleChanged} ${parts.join(' ')}`)
     return { outcome: 'ok', final: false, breaker: false, rateLimited: false, foundChange: true, error: null }
   } catch (err) {

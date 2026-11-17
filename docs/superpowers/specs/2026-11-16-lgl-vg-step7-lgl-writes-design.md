@@ -506,8 +506,15 @@ Controller rulings made while building, which change or sharpen the design.
 - **Flapping counts distinct runs.** One write logs one row per call, so the
   count is distinct `runId` per person and field among `written` rows.
 - **5000 rows is a final failure.** Reaching 5000 written log rows in 30 days
-  fails the run without writing. Expected volume is a few hundred rows even at
-  go-live; 5000 means a loop, so halting and alerting is right.
+  for one person fails the run without writing; 5000 means a loop, so halting
+  and alerting is right. (Call, code review: the log is read per person the
+  guard looks up, after a first plan with no counts, and in every mode, so a
+  run with LGL writes off keeps the flapping holds and a run with nothing to
+  write to LGL reads nothing.)
+- **A revive answered 404 is stale** (call, code review): the entry is gone,
+  so the next run adds the value; no hold. A refusal after an earlier call of
+  the field was answered opens `lgl-incomplete`, not `lgl-refused`. An add
+  answered without an entry id fails the run.
 - **A VG check that would send LGL writes during an LGL rate-limit pause**
   fails before writing. Checks by hand use 5 attempts; the service's checks 1.
 - **Go-live `--max-people`.** Its `n` comes from the write run's own breaker

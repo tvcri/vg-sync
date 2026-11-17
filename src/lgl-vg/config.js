@@ -74,7 +74,7 @@ function toAllowList(env, name) {
 
 // Whether the sync may write to this LGL constituent (ids compare as strings).
 export function allowedForLgl(config, constituentId) {
-  return config.lglWriteAllow === 'all' || config.lglWriteAllow.has(String(constituentId))
+  return config.lglWriteAllow === 'all' || config.lglWriteAllow?.has(String(constituentId)) === true // none when unset
 }
 
 export function loadConfig(env = process.env) {
