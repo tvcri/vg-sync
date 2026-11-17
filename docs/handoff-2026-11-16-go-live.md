@@ -52,6 +52,22 @@
   `--write-lgl`. `.env.harness` (gitignored) needs `LGL_WRITE_ALLOW=all`.
 - `seed-import` now runs without `--write-lgl`.
 
+## Fixed after the final review
+
+1. A call that fails without a refusal (timeout, 5xx, 429 out of attempts) is
+   logged in `sync_log` with outcome `failed` before the run fails.
+2. A failed run saves what it gathered: memory upserted and the new holds
+   opened (an `addressee` hold included), nothing closed or reopened.
+3. A field whose calls stop part way opens an `lgl-incomplete` hold (not
+   owned) naming the calls sent and the entry left current (`oldEntryId`).
+4. The stale check compares an unclean LGL value as stored (`lglExpect`, shared
+   by plan and apply), so an unclean-to-unclean edit, or an edit of the clean
+   phone slot beside an unclean one, is stale.
+5. A log append that also fails on the failure path is named in the error,
+   so the PASS FAILED / CHECK FAILED line carries it.
+6. Two writes to the same constituent and field in one run are refused before
+   anything is sent.
+
 ## Go-live tasks for the engineer
 
 The design's "Go-live" has the order; each stage that writes to production LGL
@@ -127,6 +143,17 @@ Deferred minors from the step 7 reviews:
   salutation with the gift-derived clause. The allow-list scenario hard-codes
   an id; the harness's lglLog sorts by `Number(logId)`; one known stale
   scenario's noise remains.
+
+Parked minors from the final review:
+
+- The log is appended once per constituent, not per call: a SIGKILL during a
+  429 wait can lose that constituent's log rows for calls already sent.
+- The dry run's `lgl-writes=` count is always 0; for the true count use the
+  write run's breaker message (go-live task 5).
+- VG is not re-read before an LGL write; a VG edit in between settles on the
+  next run.
+- A note for staff: an `lgl-incomplete` hold needs a person to retire the old
+  entry (its `oldEntryId`) in LGL by hand; the sync never closes it.
 
 ## Lessons from the step 7 build
 
