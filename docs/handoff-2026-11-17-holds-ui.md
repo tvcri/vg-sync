@@ -58,18 +58,21 @@ have the exact rule for each reason.
 
 ## How many to expect
 
-From the production dry run of 2026-11-16, adjusted for the import's
-decisions that `seed-import` loads before go-live. Derived, not observed: a
-dry run on a restored snapshot with the decisions loaded would confirm it.
+Observed in a dry full pass of 2026-11-17: the production VG snapshot of
+that afternoon, restored into the dev database with the import's decisions
+loaded (`seed-import`, as at go-live), against production LGL. **152 holds
+would be open on day 1.**
 
-- **About 145 open field holds**, all on donors the import *linked* to an
-  existing VG person. The import only added the Donor link to those people;
-  nobody has compared their details before. Of those: 93 name holds (63
-  nickname, 30 first name), 25 phones with no free slot, 10 couple first
-  names (5 couples), 5 PO boxes, 6 for the engineer, 6 others.
-- **About 5 open unlinked holds**: the import's 4 open holds, carried over,
-  and one donor new since the import. Some 195 others load already
-  dismissed (staff skips and horizon skips) and stay out of sight.
+- **145 field holds**, all on donors the import *linked* to an existing VG
+  person. The import only added the Donor link to those people; nobody had
+  compared their details before. Of those: 93 name holds (63 nickname, 30
+  first name), 25 phones with no free slot, 10 couple first names (5
+  couples), 5 PO boxes, 6 for the engineer (`unclean`, `ambiguous`), 6
+  others (last name, email, suffix).
+- **7 unlinked holds**: the import's 4 open holds, carried over, and 3
+  donors the matcher could not place. The import's 138 horizon skips stay
+  dismissed, and its staff skips (59) are left alone entirely, so neither
+  is in front of staff.
 
 62 of the 63 nickname holds are one system blank and the other filled, not
 a disagreement. A customer answer can remove them (see Open questions).
@@ -134,7 +137,11 @@ For the customer (business rules; collect, do not decide):
 
 - When only one system has a nickname (or first name, or suffix), should
   the sync fill in the blank side? Today it holds. A yes removes about 62
-  of the 93 name holds, as a new setting with today's behaviour as default.
+  of the 93 name holds. It needs a new action or setting, with today's
+  behaviour as default: the existing `to-vg` on `never-agreed` would empty
+  VG's nickname wherever LGL has none (`docs/policy.json.5.md`), and
+  `to-lgl` there fills LGL from VG but also replaces a different LGL
+  nickname with VG's.
 - Should phone numbers with no free slot in VG (25 holds) stay with staff,
   or should one rule decide which number VG keeps?
 - Who receives the list, and how often ("How held items reach staff" in
