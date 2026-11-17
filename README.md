@@ -264,6 +264,10 @@ npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--g
 
   Stop the service before the next harness run, which wipes these records.
 
+  Every reseed (a harness run or `--seed-only`) gives Admin to the dev login
+  `HARNESS_VG_ADMIN_USER` (default `manual`), so the dev app can be used
+  afterwards; it acknowledges the privacy rules at its first sign-in.
+
 What it touches: the LGL trial account (it deletes every constituent carrying
 the harness marker, then creates the scenarios'), and the dev VG database,
 which every run reseeds whole with the generator. It refuses to start unless

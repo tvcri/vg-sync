@@ -17,6 +17,9 @@
 // Grants (federation scope: villageId NULL, see the app's 0013-rbac-roles.js):
 //   service-account-<VG_CLIENT_ID>          role 8 (Sync Service, 0033-sync.js)
 //   service-account-<HARNESS_VG_CLIENT_ID>  role 4 (Admin) and role 8
+//   HARNESS_VG_ADMIN_USER (default manual)  role 4 (Admin): a person's own dev login, so the dev app
+//                                           can be used after a reseed (it acknowledges the privacy
+//                                           rules itself, at first sign-in)
 // Then each account acknowledges the privacy rules through the API: the
 // service by its own `setup --acknowledge-privacy`, the harness by its staff
 // client.
@@ -37,6 +40,7 @@ const DEFAULT_GENERATOR_DIR = join(homedir(), 'dev/village-green/data')
 const DEMO_PORT = '60002'
 const SYNC_ROLE = 8
 const ADMIN_ROLE = 4
+export const DEFAULT_ADMIN_USER = 'manual'
 
 // A MySQL string literal. Escapes as mysql_real_escape_string does.
 export function sqlString(value) {
@@ -52,24 +56,25 @@ const userRow = (username) =>
 const grant = (username, roleId) =>
   `INSERT INTO role_grant (userId, roleId, villageId) SELECT userId, ${Number(roleId)}, NULL FROM user_data WHERE username = ${sqlString(username)} ON DUPLICATE KEY UPDATE roleId = role_grant.roleId;`
 
-export const expectedGrants = ({ syncUser, harnessUser }) => [
+export const expectedGrants = ({ syncUser, harnessUser, adminUser }) => [
   [syncUser, SYNC_ROLE], [harnessUser, ADMIN_ROLE], [harnessUser, SYNC_ROLE],
+  ...(adminUser ? [[adminUser, ADMIN_ROLE]] : []),
 ]
 
-// The statements that restore both accounts. Pure; every value is escaped.
-export function sqlFor({ syncUser, harnessUser }) {
+// The statements that restore the accounts. Pure; every value is escaped.
+export function sqlFor(users) {
+  const names = [users.syncUser, users.harnessUser, ...(users.adminUser ? [users.adminUser] : [])]
   return [
     'START TRANSACTION;',
-    userRow(syncUser),
-    userRow(harnessUser),
-    ...expectedGrants({ syncUser, harnessUser }).map(([u, r]) => grant(u, r)),
+    ...names.map(userRow),
+    ...expectedGrants(users).map(([u, r]) => grant(u, r)),
     'COMMIT;',
   ]
 }
 
-const readBack = ({ syncUser, harnessUser }) =>
+const readBack = (users) =>
   `SELECT ud.username, rg.roleId FROM role_grant rg JOIN user_data ud ON ud.userId = rg.userId
-   WHERE rg.villageId IS NULL AND ud.username IN (${sqlString(syncUser)}, ${sqlString(harnessUser)})
+   WHERE rg.villageId IS NULL AND ud.username IN (${[...new Set(expectedGrants(users).map(([u]) => u))].map(sqlString).join(', ')})
    ORDER BY ud.username, rg.roleId;`
 
 // Ruling R1: the service runs with every variable the example file names
@@ -108,7 +113,10 @@ export async function restoreAccounts(env, {
   exec = defaultExec, spawn = defaultSpawn, staff, stdout = console.log,
   exampleText = readExample(), envFile = '.env.harness', cwd = REPO,
 } = {}) {
-  const users = { syncUser: accountUsername(env.VG_CLIENT_ID), harnessUser: accountUsername(env.HARNESS_VG_CLIENT_ID) }
+  const users = {
+    syncUser: accountUsername(env.VG_CLIENT_ID), harnessUser: accountUsername(env.HARNESS_VG_CLIENT_ID),
+    adminUser: String(env.HARNESS_VG_ADMIN_USER ?? '').trim() || DEFAULT_ADMIN_USER,
+  }
   const input = [...sqlFor(users), readBack(users)].join('\n') + '\n'
   const user = env.HARNESS_DB_USER || 'root'
   const res = await exec('docker',

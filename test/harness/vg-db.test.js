@@ -37,6 +37,22 @@ test('sqlString escapes quotes, backslashes and control characters', () => {
   assert.throws(() => sqlString(5), /string/)
 })
 
+test('sqlFor with an admin user adds that login with Admin', () => {
+  const sql = sqlFor({ ...users, adminUser: 'manual' }).join('\n')
+  assert.match(sql, /INSERT INTO user_data \(username\) VALUES \('manual'\) ON DUPLICATE KEY/)
+  assert.match(sql, /SELECT userId, 4, NULL FROM user_data WHERE username = 'manual'/)
+})
+
+test('restoreAccounts grants Admin to HARNESS_VG_ADMIN_USER, manual by default', async () => {
+  const f = fakes()
+  await restoreAccounts(env, { ...f, stdout: () => {}, exampleText: '' })
+  assert.match(f.calls.exec[0].opts.input, /WHERE username = 'manual'/)
+  const g = fakes({ stdout: 'jane.doe\t4\nservice-account-vg-sync\t8\nservice-account-vg-sync-harness\t4\nservice-account-vg-sync-harness\t8\n' })
+  await restoreAccounts({ ...env, HARNESS_VG_ADMIN_USER: 'jane.doe' }, { ...g, stdout: () => {}, exampleText: '' })
+  assert.match(g.calls.exec[0].opts.input, /WHERE username = 'jane.doe'/)
+  assert.doesNotMatch(g.calls.exec[0].opts.input, /'manual'/)
+})
+
 test('accountUsername is Keycloak\'s service-account name, lower-cased', () => {
   assert.equal(accountUsername('VG-Sync'), 'service-account-vg-sync')
 })
@@ -53,7 +69,7 @@ const env = {
   HARNESS_DB_CONTAINER: 'village-green-orch-db-1', HARNESS_DB_HOST: '127.0.0.1', HARNESS_DB_PORT: '60001',
   HARNESS_DB_USER: 'root', HARNESS_DB_PASSWORD: 'p', HARNESS_DB_SCHEMA: 'vg', HARNESS_GENERATOR_DIR: '/gen',
 }
-const grantsOut = 'service-account-vg-sync\t8\nservice-account-vg-sync-harness\t4\nservice-account-vg-sync-harness\t8\n'
+const grantsOut = 'manual\t4\nservice-account-vg-sync\t8\nservice-account-vg-sync-harness\t4\nservice-account-vg-sync-harness\t8\n'
 
 function fakes({ code = 0, stdout = grantsOut, port = '60001' } = {}) {
   const calls = { spawn: [], exec: [] }
