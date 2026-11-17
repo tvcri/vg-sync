@@ -3,7 +3,7 @@
 // constituents on the allow-list. Without writeVg, VG sees GET requests only.
 import { planLinked, readLglWriteCounts } from './plan.js'
 import { allowedForLgl } from './config.js'
-import { planUnlinked } from './unlinked.js'
+import { planUnlinked, closesOf } from './unlinked.js'
 import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
 import { createStopper } from './abort.js'
@@ -149,7 +149,7 @@ export async function runFullPass({
     await saveDecisions()
 
     // A dry run shows what the hold table would do: opened, kept, reopened, closed, left dismissed.
-    const holdPreview = writeVg ? null : reconcileHolds([...plan.holds, ...unlinked.holds], holdsRead).counts
+    const holdPreview = writeVg ? null : reconcileHolds([...plan.holds, ...unlinked.holds], holdsRead, { close: closesOf(unlinked).map((h) => h.holdId) }).counts
     if (!quiet) stdout(JSON.stringify({ counts: plan.counts, apply: applied?.counts ?? null, ...(holdPreview ? { holdsIfWritten: holdPreview } : {}) }, null, 2))
     if (trips) {
       stdout(`The circuit breaker would trip: the plan changes ${plan.counts.peopleChanged} people, more than the limit of ${limit}. A write run would fail without writing; review the decisions file, then raise the limit with --max-people.`)

@@ -23,7 +23,10 @@ pair*), field by field, and copies a change from one system to the other as
 `policy.json` directs. It links or creates a VG person for an LGL donor with
 no link, removes the Donor mark from a person whose LGL record is gone, and
 keeps the VG last gift date current. What it will not decide alone it
-records as a *hold* in VG's `sync_hold` table, for staff.
+records as a *hold* in VG's `sync_hold` table, for staff. Staff can answer an
+unlinked donor's hold in VG ("this is person X", "a new person"); the next
+full pass, or a change check that touches the donor, carries the answer out,
+or opens a `resolution-failed` hold saying why it could not.
 
 Fields compared: first name, last name, suffix, nickname, address, email,
 phones (home and cell), deceased.
@@ -235,4 +238,5 @@ node src/lgl-vg/main.js --once full --write-vg --write-lgl --env .env.harness
 policy.json(5) (`docs/policy.json.5.md`); `README.md`; the sync design,
 `docs/superpowers/specs/2026-11-11-lgl-vg-sync-design.md`; LGL writes,
 `docs/superpowers/specs/2026-11-16-lgl-vg-step7-lgl-writes-design.md`;
-`docs/handoff-2026-11-16-go-live.md`; `docs/handoff-2026-11-17-holds-ui.md`.
+`docs/handoff-2026-11-16-go-live.md`; `docs/handoff-2026-11-17-holds-ui.md`;
+`docs/handoff-2026-11-17-hold-resolutions.md`.

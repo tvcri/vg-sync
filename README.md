@@ -97,7 +97,9 @@ docker build --build-arg IMAGE_REVISION=$(git rev-parse HEAD) -t vg-sync:local .
 `npm run full` (`node src/lgl-vg/main.js --once full`) reads Little Green Light
 and Village Green, decides every linked pair field by field from the sync
 memory and `policy.json`, links or creates a VG person for each LGL donor with
-no link (or holds it with a reason), removes the Donor mark from a person whose
+no link (or holds it with a reason; staff can answer such a hold in VG with
+"this is person X" or "a new person", and the next pass carries that out or
+holds it as `resolution-failed`), removes the Donor mark from a person whose
 LGL record is gone (or follows it to the record that replaced it), and prints a
 summary followed by one line: `PASS OK full dry-run ...` or `PASS FAILED full
 <reason>`. The line counts `links`, `creates` and `unlinks` beside the field
@@ -131,7 +133,9 @@ the end. It holds real people. Do not commit or share it. A failure before
 planning (sign-in, a failed read, the constituent-count check) writes no file.
 On a dry run the PASS line shows `holdsOpen` (open holds read) and
 `holdsPlanned` (holds this pass wants). The summary's `holdsIfWritten` says what a write
-run would do to the hold table (opened, seen, reopened, closed, left dismissed).
+run would do to the hold table (opened, seen, reopened, closed, left dismissed,
+and `refreshed`: detail replaced on a hold whose facts are unchanged, such as
+the LGL name, email and address every unlinked donor's hold carries).
 
 ## Running a change check by hand
 

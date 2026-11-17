@@ -18,7 +18,7 @@ import { vgFields, comparable } from './fields.js'
 import { reconcileHolds } from './holds.js'
 import { applyLglWrites } from './apply-lgl.js'
 import { isRefusal, aborted } from './abort.js'
-import { unlinkedNotice, createUnfinished } from './unlinked.js'
+import { unlinkedNotice, createUnfinished, resolutionFailed } from './unlinked.js'
 
 
 // lgl: the LGL client (null sends nothing to LGL); runId: the sync_log rows' run; policy: gives the
@@ -144,7 +144,7 @@ export async function applyPlan(plan, {
 
   const u = plan.unlinked && !stopped
     ? await applyUnlinked(plan.unlinked, { vg, log, replan, signal, counts: counts.unlinked })
-    : { holds: [], stopped }
+    : { holds: [], close: [], stopped }
   if (u.townMissing) counts.townMissing += u.townMissing
   stopped = u.stopped
 
@@ -156,18 +156,32 @@ export async function applyPlan(plan, {
   if (agree.length) counts.memoryUpserted = await vg.putSyncFields(agree)
 
   const desired = [...plan.holds, ...refusalHolds, ...l.holds, ...(plan.unlinked?.holds ?? []), ...u.holds]
-  const { open, patch, counts: holdCounts } = reconcileHolds(desired, existingHolds)
+  const close = [...(plan.unlinked?.close ?? []), ...u.close].map((h) => h.holdId)
+  const { open, patch, counts: holdCounts } = reconcileHolds(desired, existingHolds, { close })
   counts.holds = holdCounts
+  // Closes first: a hold closed here may share its key with one about to open (VG allows one open per key).
+  const closes = patch.filter((x) => x.state === 'closed')
+  const rest = patch.filter((x) => x.state !== 'closed')
+  if (closes.length) await vg.patchSyncHolds(closes)
   if (open.length) await vg.createSyncHolds(open)
-  if (patch.length) await vg.patchSyncHolds(patch)
+  if (rest.length) await vg.patchSyncHolds(rest)
   return { counts, stopped }
 }
 
 // Writes for unlinked donors. Returns the holds it wants on top of the plan's (notices, refusals,
-// and unfinished creates that stay unfinished), and whether it stopped on the signal.
+// and unfinished creates that stay unfinished), the resolved holds to close, and whether it stopped
+// on the signal. A link or create carrying a staff resolution (w.hold) closes that hold when written,
+// keeps it open when stale (the next pass decides again), and fails it when VG refuses.
 async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
   const holds = []
+  const close = []
   let townMissing = 0
+  const failResolution = (w, message) => {
+    const f = resolutionFailed(w.hold, message)
+    if (w.hold.detail?.lgl) f.detail.lgl = w.hold.detail.lgl
+    close.push(w.hold)
+    holds.push(f)
+  }
   const note = (kind, d, outcome, extra) => {
     log({ kind, ...d, outcome, ...extra })
     counts[outcome]++
@@ -192,7 +206,7 @@ async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
   }
 
   for (const w of up.unlinks) {
-    if (aborted(signal)) return { holds, townMissing, stopped: true }
+    if (aborted(signal)) return { holds, close, townMissing, stopped: true }
     const d = { constituentId: w.constituentId, personId: w.personId, action: 'unlink' }
     if (!(await stillLinked(w.personId, w.constituentId))) { note('record', d, 'stale'); continue }
     await vg.deleteDonor(w.personId) // a refusal here is not expected: fail the pass
@@ -200,7 +214,7 @@ async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
     note('record', d, 'unlinked')
   }
   for (const w of up.follows) {
-    if (aborted(signal)) return { holds, townMissing, stopped: true }
+    if (aborted(signal)) return { holds, close, townMissing, stopped: true }
     const d = { constituentId: w.constituentId, personId: w.personId, action: 'follow', from: w.from }
     // Still linked to the gone record, and the record it is followed to still linked to nobody.
     if (!(await stillLinked(w.personId, w.from)) || (await vg.getLinkedPersons(w.constituentId)).length) {
@@ -212,23 +226,33 @@ async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
     else note('unlinked', d, 'followed')
   }
 
-  if (!up.links.length && !up.creates.length && !up.finishes.length) return { holds, townMissing, stopped: false }
-  if (aborted(signal)) return { holds, townMissing, stopped: true }
+  if (!up.links.length && !up.creates.length && !up.finishes.length) return { holds, close, townMissing, stopped: false }
+  if (aborted(signal)) return { holds, close, townMissing, stopped: true }
   // One fresh read: anything whose decision has changed since the plan is left for the next pass.
   const fresh = replan ? replan(await vg.listPersons()) : up
   const has = (list, w, key) => list.some((x) => key(x) === key(w))
   const linkKey = (x) => `${x.personId}|${x.constituentId}`
 
   for (const w of up.links) {
-    if (aborted(signal)) return { holds, townMissing, stopped: true }
+    if (aborted(signal)) return { holds, close, townMissing, stopped: true }
     const d = { constituentId: w.constituentId, personId: w.personId, action: 'link' }
-    if (!has(fresh.links, w, linkKey)) { note('unlinked', d, 'stale'); continue }
+    if (!has(fresh.links, w, linkKey)) {
+      if (w.hold) holds.push(again(w.hold))
+      note('unlinked', d, 'stale')
+      continue
+    }
     const e = await donorPut(w)
-    if (e) refuse(w, e, 'link')
-    else note('unlinked', d, 'linked')
+    if (e && w.hold) {
+      failResolution(w, `VG would not link this donor to the person chosen (${e.message}).`)
+      note('unlinked', d, 'refused', { note: e.message })
+    } else if (e) refuse(w, e, 'link')
+    else {
+      if (w.hold) close.push(w.hold)
+      note('unlinked', d, 'linked')
+    }
   }
   for (const w of up.finishes) {
-    if (aborted(signal)) return { holds, townMissing, stopped: true }
+    if (aborted(signal)) return { holds, close, townMissing, stopped: true }
     const d = { constituentId: w.constituentId, personId: w.personId, action: 'finish' }
     if (!has(fresh.finishes, w, (x) => x.holdId)) { holds.push(again(w.hold)); note('unlinked', d, 'stale'); continue }
     const e = await donorPut(w)
@@ -240,9 +264,13 @@ async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
     note('unlinked', d, 'finished') // its create-unfinished hold is not desired, so it closes
   }
   for (const w of up.creates) {
-    if (aborted(signal)) return { holds, townMissing, stopped: true }
+    if (aborted(signal)) return { holds, close, townMissing, stopped: true }
     const d = { constituentId: w.constituentId, action: 'create' }
-    if (!has(fresh.creates, w, (x) => x.constituentId)) { note('unlinked', d, 'stale'); continue }
+    if (!has(fresh.creates, w, (x) => x.constituentId)) {
+      if (w.hold) holds.push(again(w.hold))
+      note('unlinked', d, 'stale')
+      continue
+    }
     const body = { ...w.body }
     if (w.address) {
       let town = null
@@ -259,10 +287,14 @@ async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
       person = await vg.createPerson(body)
     } catch (e) {
       if (!isRefusal(e)) throw e
-      refuse(w, e, 'create')
+      if (w.hold) {
+        failResolution(w, `VG would not create this person (${e.message}).`)
+        note('unlinked', d, 'refused', { note: e.message })
+      } else refuse(w, e, 'create')
       continue
     }
     const personId = String(person.personId)
+    if (w.hold) close.push(w.hold) // the person exists; an unfinished link is the sync's to finish
     // Logged before the donor row: a pass that stops here leaves an open create-unfinished hold,
     // and the next pass finishes the link (planUnlinked) instead of creating the person again.
     const [logged] = await vg.createSyncHolds([createUnfinished(w, personId)])
@@ -272,7 +304,7 @@ async function applyUnlinked(up, { vg, log, replan, signal = null, counts }) {
     await vg.patchSyncHolds([{ holdId: logged.holdId, state: 'closed' }])
     note('unlinked', { ...d, personId }, 'created', body.town === undefined && w.address ? { note: 'town not resolved' } : undefined)
   }
-  return { holds, townMissing, stopped: false }
+  return { holds, close, townMissing, stopped: false }
 }
 
 const again = (h) => ({

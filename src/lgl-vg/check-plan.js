@@ -4,7 +4,7 @@
 // result is cut to the touched constituents. A check never unlinks and never acts on the
 // record-level reasons: those are the full pass's, the only one that sees deletions.
 import { planLinked } from './plan.js'
-import { planUnlinked } from './unlinked.js'
+import { planUnlinked, closesOf } from './unlinked.js'
 import { reconcileHolds } from './holds.js'
 
 export const RECORD_REASONS = new Set(['lgl-missing', 'no-longer-donor'])
@@ -81,6 +81,7 @@ function cutUnlinked(u, touched) {
     creates: u.creates.filter(keep),
     finishes: u.finishes.filter(keep),
     holds: u.holds.filter((h) => touched.has(str(h.lglConstituentId))),
+    close: (u.close ?? []).filter((h) => touched.has(str(h.lglConstituentId))),
   }
   const hold = {}
   for (const d of decisions) if (d.outcome === 'hold') hold[d.note] = (hold[d.note] ?? 0) + 1
@@ -156,13 +157,14 @@ export const breakerPeople = (plan) => peopleOf(plan, { donor: false }).size
 const CHANGE_OUTCOMES = new Set(['write-vg', 'write-lgl', 'deferred', 'record'])
 
 // True when the plan holds anything other than same: a write or deferred decision, a hold the
-// hold table would open, change, reopen or close, a memory row, or a link, follow, create or
+// hold table would open, change, reopen, close or refresh (a new detail), a memory row, or a link, follow, create or
 // finish. An open hold that stays open unchanged, or a dismissed one left dismissed, is not.
 export function foundChange(plan) {
   const u = plan.unlinked ?? { decisions: [], links: [], follows: [], creates: [], finishes: [], holds: [] }
   if ([...plan.decisions, ...u.decisions].some((d) => CHANGE_OUTCOMES.has(d.outcome))) return true
   if (plan.writes.length > 0 || plan.agree.length > 0) return true
   if ([u.links, u.follows, u.creates, u.finishes].some((x) => x.length > 0)) return true
-  const h = reconcileHolds([...plan.holds, ...u.holds], plan.existingHolds ?? []).counts
-  return h.opened + h.changed + h.reopened + h.closed > 0
+  const close = closesOf({ links: [], creates: [], ...u }).map((x) => x.holdId)
+  const h = reconcileHolds([...plan.holds, ...u.holds], plan.existingHolds ?? [], { close }).counts
+  return h.opened + h.changed + h.reopened + h.closed + h.refreshed > 0
 }

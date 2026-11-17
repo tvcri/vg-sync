@@ -839,7 +839,55 @@ not know stops the whole load.
 changes so that the match becomes clean, for example when staff correct a
 name in either system. Otherwise it stays open and is counted in every full
 pass's summary. The engineer can dismiss one, or link the pair by hand through the
-API. There is no other resolution path in this design.
+API. An unlinked donor's hold can also be resolved by staff (below).
+
+**(call)** **Staff resolutions** (2026-11-17, the engineer;
+`docs/handoff-2026-11-17-hold-resolutions.md`). Only a person can say who
+some unlinked donors are, so staff record the answer on the hold in VG and
+the sync carries it out (approach A; VG linking the donor itself was
+rejected because it splits who owns links). VG's `sync_hold` gains
+`resolution` (`{"kind":"link","personId":"…"}` or `{"kind":"create"}`),
+`resolvedAt`, `resolvedUserId` and `closedUserId`. VG checks which kinds a
+reason allows and reopens a staff-dismissed hold it resolves. On every pass,
+in step 4:
+
+- An open hold with no person and a resolution is a decision, not a match.
+  Its donor is taken out of matching. The latest resolution on a donor is
+  carried out; any other resolved hold on that donor closes.
+- It is checked against what VG and LGL hold now. A donor already linked to
+  the chosen person (or, for a create, to anyone) is done: the hold closes.
+  It fails when the donor is linked to someone else, is gone from LGL or is
+  no longer a donor, when the chosen person is gone or linked to another
+  donor, when two donors are resolved to one person (both fail), or when
+  the answer cannot be read.
+- `link` is written as a matcher link; `create` builds the person as a
+  matcher create (memory rows, `create-unfinished`). Matching never links
+  another donor to a person a resolution is linking; that donor is held
+  `already-linked-elsewhere`.
+- A written resolution closes its hold. One the fresh read no longer
+  carries out stays open for the next pass. A failure, or a refusal by VG,
+  closes the hold and opens `resolution-failed` (no person; detail
+  `{ resolution, message, lgl }`, `message` one sentence for staff) instead
+  of `vg-refused`. An open `resolution-failed` hold keeps its donor out of
+  matching until staff resolve or dismiss it, or the donor is linked.
+- The resolved hold is closed by id, whatever its reason (`import-skip`
+  included), and closes are sent before new holds are created: a
+  `resolution-failed` hold that fails again is closed and a new one opened
+  with the same key, and VG allows one open hold per key.
+- A change check carries out the resolutions on the donors it touched.
+
+**(call)** **Every unlinked-donor hold says who the donor is**:
+`detail.lgl` is `{ name, email, address, lastGiftDate }` (display strings
+from LGL's record; any may be null). It is not part of the fingerprint. An
+open or dismissed hold whose fingerprint is unchanged has its detail
+replaced when it differs (compared with keys sorted, as MySQL reorders JSON;
+counted as `refreshed`), and stays in its state. Open `import-hold`s and
+staff-dismissed holds are desired again with their own fingerprint so their
+detail is refreshed too.
+
+`addressee` and `lgl-incomplete` are closed by a person in VG (setting
+`closedUserId`). The sync never reads closed holds, so a closed one is not
+reopened; a later LGL write that leaves the same situation opens a new one.
 
 **Holds on fields.** A field hold closes when a later comparison of that
 field no longer produces it: the values agree again, or the policy now gives
@@ -858,9 +906,9 @@ and `no-longer-donor`. Step 3 owns exactly these reasons on holds with a
 `personId` whose reason is a matching reason (`anonymous`, `deceased-in-lgl`,
 `couple-name`, `no-last-name`, `already-linked-elsewhere`, `multiple-matches`,
 `shared-email-different-name`, `name-only`, `same-address-last-name`,
-`before-horizon`, `duplicate-in-lgl`), `import-hold` or `vg-refused`, and
-the person-level `create-unfinished` and `unlinked`. `import-skip` is never
-closed by the sync.
+`before-horizon`, `duplicate-in-lgl`), `import-hold`, `vg-refused` or
+`resolution-failed`, and the person-level `create-unfinished` and
+`unlinked`. `import-skip` is closed by the sync only when staff resolve it.
 
 ## What is stored in VG
 

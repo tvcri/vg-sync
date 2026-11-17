@@ -504,3 +504,62 @@ test('applyPlan failing part way through a field opens its lgl-incomplete hold',
   const created = vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
   assert.deepEqual(created.map((h) => [h.personId, h.field, h.reason, h.detail.oldEntryId]), [['7', 'email', 'lgl-incomplete', '11']])
 })
+
+// --- staff resolutions ---
+const resolvedHold = (resolution, o = {}) => ({ holdId: '40', lglConstituentId: '202', personId: null, field: null, reason: 'name-only', fingerprint: 'nf', detail: null, state: 'open', resolution, ...o })
+const holdPatches = (vg) => vg.calls.filter((c) => c[0] === 'patchSyncHolds').flatMap((c) => c[1])
+const holdsOpened = (vg) => vg.calls.filter((c) => c[0] === 'createSyncHolds').flatMap((c) => c[1])
+
+test('a resolved link is written and its hold closed, even a reopened import-skip step 4 does not own', async () => {
+  const h = resolvedHold({ kind: 'link', personId: '7' }, { reason: 'import-skip' })
+  const vg = roster({ people: [person({ personId: '7', donor: null })] })
+  const u = up({ links: [{ personId: '7', constituentId: '202', lastGiftDate: '2026-06-01', fingerprint: 'fl', hold: h }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, existingHolds: [h], replan: same(u) })
+  assert.deepEqual(vg.byId.get('7').donor, { lglConstituentId: '202', lastGiftDate: '2026-06-01' })
+  assert.deepEqual(holdPatches(vg), [{ holdId: '40', state: 'closed' }])
+  assert.equal(r.counts.unlinked.linked, 1)
+})
+
+test('a resolved link the fresh plan no longer makes keeps its hold open for the next pass', async () => {
+  const h = resolvedHold({ kind: 'link', personId: '7' })
+  const vg = roster({ people: [person({ personId: '7', donor: null })] })
+  const u = up({ links: [{ personId: '7', constituentId: '202', lastGiftDate: null, fingerprint: 'fl', hold: h }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, existingHolds: [h], replan: () => up() })
+  assert.deepEqual(holdPatches(vg), [{ holdId: '40', seen: true }])
+  assert.equal(r.counts.unlinked.stale, 1)
+})
+
+test('a refused resolved link closes its hold and opens resolution-failed, not vg-refused', async () => {
+  const h = resolvedHold({ kind: 'link', personId: '7' })
+  const vg = roster({ people: [person({ personId: '7', donor: null })], donorErr: 422 })
+  const u = up({ links: [{ personId: '7', constituentId: '202', lastGiftDate: null, fingerprint: 'fl', hold: h }] })
+  const r = await applyPlan({ ...emptyPlan, unlinked: u }, { vg, existingHolds: [h], replan: same(u) })
+  assert.deepEqual(holdPatches(vg), [{ holdId: '40', state: 'closed' }])
+  const opened = holdsOpened(vg)
+  assert.deepEqual(opened.map((x) => [x.reason, x.lglConstituentId, x.personId]), [['resolution-failed', '202', null]])
+  assert.deepEqual(opened[0].detail, { resolution: { kind: 'link', personId: '7' }, message: 'VG would not link this donor to the person chosen (refused).' })
+  assert.equal(r.counts.unlinked.refused, 1)
+})
+
+test('a resolved create closes its hold; a refused one opens resolution-failed', async () => {
+  const h = resolvedHold({ kind: 'create' }, { lglConstituentId: '201' })
+  const ok = roster()
+  const u = up({ creates: [{ ...createW, hold: h }] })
+  await applyPlan({ ...emptyPlan, unlinked: u }, { vg: ok, existingHolds: [h], replan: same(u) })
+  assert.deepEqual(holdPatches(ok), [{ holdId: 'n0', state: 'closed' }, { holdId: '40', state: 'closed' }])
+
+  const no = roster({ createErr: 400 })
+  await applyPlan({ ...emptyPlan, unlinked: u }, { vg: no, existingHolds: [h], replan: same(u) })
+  assert.deepEqual(holdPatches(no), [{ holdId: '40', state: 'closed' }])
+  assert.deepEqual(holdsOpened(no).map((x) => [x.reason, x.detail.message]), [['resolution-failed', 'VG would not create this person (refused).']])
+})
+
+test('the plan\'s failed resolutions close before the new holds are created (VG\'s unique open key)', async () => {
+  const h = resolvedHold({ kind: 'create' }, { reason: 'resolution-failed' })
+  const failed = { lglConstituentId: '202', personId: null, field: null, reason: 'resolution-failed', fingerprint: 'rf2', detail: { message: 'm' } }
+  const vg = roster()
+  await applyPlan({ ...emptyPlan, unlinked: up({ close: [h], holds: [failed] }) }, { vg, existingHolds: [h], replan: same(up()) })
+  assert.deepEqual(names(vg), ['patchSyncHolds', 'createSyncHolds'])
+  assert.deepEqual(holdPatches(vg), [{ holdId: '40', state: 'closed' }])
+  assert.equal(holdsOpened(vg)[0].fingerprint, 'rf2')
+})

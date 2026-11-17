@@ -32,6 +32,8 @@ const per = (personId, { donor = null, email = 'jane@example.org', ...detail } =
 })
 const linkTo = (cid, lastGiftDate = '2026-06-01') => ({ lglConstituentId: String(cid), lastGiftDate })
 const gift = (cid, date = '2026-06-01', id = cid * 100) => ({ id, constituent_id: cid, received_date: date, gift_type_id: 1, fund_id: 9, payment_type_id: 1 })
+// detail.lgl as a full pass writes it for con(201)
+const LGL = { name: 'Jane Doe', email: 'jane@example.org', address: '12 Elm St, Springfield, RI 99999', lastGiftDate: '2026-06-01' }
 const hold = (o) => ({ holdId: '1', personId: null, field: null, fingerprint: 'f', detail: null, state: 'open', dismissalKind: null, ...o })
 // memory rows saying every field was agreed at the constituent's current LGL values
 const agreedAt = (c, personId) => FIELDS.map((field) => ({
@@ -232,7 +234,7 @@ test('an unchanged open hold is not a change', () => {
   const persons = [per(7, { email: 'other@example.org' })] // name only: held
   const cache = cacheOf([con(201)])
   const fp = unlinkedFingerprint('name-only', ['7'], '2026-06-01')
-  const same = check({ touched: ['201'], cache, persons, holds: [hold({ lglConstituentId: '201', reason: 'name-only', fingerprint: fp })] })
+  const same = check({ touched: ['201'], cache, persons, holds: [hold({ lglConstituentId: '201', reason: 'name-only', fingerprint: fp, detail: { candidates: ['7'], lastGiftDate: '2026-06-01', lgl: LGL } })] })
   assert.deepEqual(same.unlinked.holds.map((h) => h.reason), ['name-only'])
   assert.equal(foundChange(same), false)
   // the same hold with new facts is changed, and a hold not yet open is opened
@@ -247,7 +249,7 @@ test('an unchanged open hold is not a change', () => {
 
 test('a skipped donor is not a change', () => {
   const persons = [per(7, { email: 'other@example.org' })]
-  const dismissed = hold({ lglConstituentId: '201', reason: 'name-only', state: 'dismissed', dismissalKind: 'staff' })
+  const dismissed = hold({ lglConstituentId: '201', reason: 'name-only', state: 'dismissed', dismissalKind: 'staff', detail: { lgl: LGL } })
   const p = check({ touched: ['201'], cache: cacheOf([con(201)]), persons, holds: [dismissed] })
   assert.deepEqual(p.unlinked.decisions.map((d) => d.outcome), ['skip'])
   assert.equal(foundChange(p), false)
@@ -290,4 +292,30 @@ test('foundChange is true for a write-lgl decision', () => {
   assert.deepEqual(p.decisions.map((d) => d.outcome), ['write-lgl'])
   assert.deepEqual([p.writes, p.agree, p.holds], [[], [], []])
   assert.equal(foundChange(p), true)
+})
+
+// --- staff resolutions and detail.lgl ---
+test('a check carries out a resolution on a touched donor and leaves an untouched one to its own check', () => {
+  const r = (holdId, cid) => hold({ holdId, lglConstituentId: cid, reason: 'name-only', resolution: { kind: 'create' } })
+  const gone = hold({ holdId: '3', lglConstituentId: '999', reason: 'name-only', resolution: { kind: 'create' } }) // not in LGL: fails
+  const p = check({ touched: ['201'], cache: cacheOf([con(201), con(202, { first_name: 'Ann' })]), holds: [r('1', '201'), r('2', '202'), gone] })
+  assert.deepEqual(p.unlinked.creates.map((w) => [w.constituentId, w.hold.holdId]), [['201', '1']])
+  assert.deepEqual(p.unlinked.close, [])
+  assert.equal(foundChange(p), true)
+})
+
+test('a resolution failed at planning is a change', () => {
+  const p = check({ touched: ['201'], cache: cacheOf([con(201)], []), holds: [hold({ lglConstituentId: '201', reason: 'name-only', resolution: { kind: 'create' } })] })
+  assert.deepEqual(p.unlinked.close.map((h) => h.holdId), ['1'])
+  assert.deepEqual(p.unlinked.holds.map((h) => h.reason), ['resolution-failed'])
+  assert.equal(foundChange(p), true)
+})
+
+test('a new detail.lgl on an unchanged hold is a change; the same detail is not', () => {
+  const persons = [per(7, { email: 'other@example.org' })]
+  const fp = unlinkedFingerprint('name-only', ['7'], '2026-06-01')
+  const lgl = LGL
+  const at = (detail) => check({ touched: ['201'], cache: cacheOf([con(201)]), persons, holds: [hold({ lglConstituentId: '201', reason: 'name-only', fingerprint: fp, detail })] })
+  assert.equal(foundChange(at({ candidates: ['7'], lastGiftDate: '2026-06-01', lgl })), false)
+  assert.equal(foundChange(at({ candidates: ['7'], lastGiftDate: '2026-06-01', lgl: { ...lgl, email: 'old@example.org' } })), true)
 })

@@ -9,6 +9,37 @@ import { fingerprint } from './plan.js'
 
 const isOpenOrDismissed = (h) => h.state === 'open' || h.state === 'dismissed'
 const noPerson = (h) => h.personId == null
+const squash = (s) => s.replace(/\s+/g, ' ').trim()
+const current = (list) => (list ?? []).filter((x) => !x.not_current)
+const preferred = (list) => { const a = current(list); return a.find((x) => x.is_preferred) ?? a[0] ?? null }
+
+// Who an unlinked donor is, for a person reading the hold: LGL's name, preferred email and address
+// on one line, and last gift date. Display strings; any may be null.
+export function lglDetail (c, lastGiftDate) {
+  const name = squash([c.first_name, c.last_name, c.suffix].filter((x) => x && String(x).trim()).join(' '))
+  const a = preferred(c.street_addresses)
+  const street = a?.street ? a.street.split(/\n+/).map(squash).filter(Boolean).join(', ') : ''
+  const zip = (a?.postal_code || a?.zip5) ?? ''
+  const tail = squash([a?.state, zip].filter(Boolean).join(' '))
+  const address = a ? [street, a.city, tail].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') : ''
+  return {
+    name: name || null,
+    email: preferred(c.email_addresses)?.address?.trim() || null,
+    address: address || null,
+    lastGiftDate: lastGiftDate ?? null,
+  }
+}
+
+// A VG person as staff read them: "Last, First".
+const personName = (p) => [p?.detail?.lastName, p?.detail?.firstName].filter(Boolean).join(', ') || `person ${p?.personId}`
+
+// The hold opened when a staff resolution cannot be carried out. message is one sentence for staff.
+export const resolutionFailed = (h, message) => ({
+  lglConstituentId: String(h.lglConstituentId), personId: null, field: null, reason: 'resolution-failed',
+  fingerprint: fingerprint(['resolution-failed', String(h.lglConstituentId), String(h.holdId), message]),
+  detail: { resolution: h.resolution ?? null, message },
+})
+const resolutionOf = (h) => h.resolution ?? null // VG before its resolution migration sends no field
 
 // The POST /persons body and the memory rows for a person created from LGL's record. A field LGL
 // leaves empty, or holds but could not clean, is left out of the body; only the clean and the empty
@@ -57,7 +88,11 @@ export function planUnlinked ({ constituents, gifts, persons, holds, unlinking =
   const follows = []
   const creates = []
   const finishes = []
-  const counts = { unlinkedDonors: 0, link: 0, follow: 0, create: 0, finish: 0, unlink: 0, skip: 0, hold: {} }
+  const close = []
+  const counts = {
+    unlinkedDonors: 0, link: 0, follow: 0, create: 0, finish: 0, unlink: 0, skip: 0, hold: {},
+    resolution: { link: 0, create: 0, done: 0, failed: 0 },
+  }
   const again = (h) => desired.push({
     lglConstituentId: String(h.lglConstituentId), personId: h.personId == null ? null : String(h.personId),
     field: h.field ?? null, reason: h.reason, fingerprint: h.fingerprint, detail: h.detail ?? null,
@@ -73,15 +108,81 @@ export function planUnlinked ({ constituents, gifts, persons, holds, unlinking =
   counts.unlinkedDonors = donors.length
   const isUnlinkedDonor = new Set(donors.map((d) => String(d.constituent.id)))
 
-  // Left alone: a staff dismissal, an open import hold, or a create not yet finished.
+  // Left alone: a staff dismissal, an open import hold, an open resolution-failed hold, a staff
+  // resolution (carried out below), or a create not yet finished.
   const exclude = new Set()
   const importHolds = new Map()
   const refused = new Map()
+  const resolvedBy = new Map() // constituent -> its open resolved holds
   for (const h of holds) {
     const x = String(h.lglConstituentId)
-    if (noPerson(h) && h.state === 'dismissed' && h.dismissalKind === 'staff') exclude.add(x)
-    if (noPerson(h) && h.state === 'open' && h.reason === 'import-hold') { exclude.add(x); importHolds.set(x, h) }
-    if (noPerson(h) && h.reason === 'vg-refused' && isOpenOrDismissed(h)) refused.set(`${x}|${h.fingerprint}`, h)
+    if (!noPerson(h)) continue
+    if (h.state === 'open' && resolutionOf(h) !== null) {
+      exclude.add(x)
+      resolvedBy.set(x, [...(resolvedBy.get(x) ?? []), h])
+      continue
+    }
+    if (h.state === 'dismissed' && h.dismissalKind === 'staff') {
+      exclude.add(x)
+      if (isUnlinkedDonor.has(x)) again(h) // kept for its detail.lgl; it stays dismissed
+    }
+    if (h.state === 'open' && h.reason === 'import-hold') { exclude.add(x); importHolds.set(x, h) }
+    if (h.state === 'open' && h.reason === 'resolution-failed') { exclude.add(x); if (!linked.has(x)) again(h) }
+    if (h.reason === 'vg-refused' && isOpenOrDismissed(h)) refused.set(`${x}|${h.fingerprint}`, h)
+  }
+
+  // Staff resolutions: an answer staff recorded on an unlinked donor's hold in VG. The latest one on a
+  // donor is checked against what VG and LGL hold now, then carried out as a link or a create (the
+  // write carries its hold; applying closes it) or failed (closed here, resolution-failed opened).
+  const linkedTo = new Map(view.filter((p) => p.donor).map((p) => [String(p.donor.lglConstituentId), p]))
+  const latest = []
+  for (const list of resolvedBy.values()) {
+    const sorted = [...list].sort((a, b) => String(b.resolvedAt ?? '').localeCompare(String(a.resolvedAt ?? '')) || Number(b.holdId) - Number(a.holdId))
+    latest.push(sorted[0])
+    close.push(...sorted.slice(1))
+  }
+  const chosen = new Map() // personId -> how many resolutions link to them
+  for (const h of latest) {
+    const r = resolutionOf(h)
+    if (r.kind === 'link' && r.personId != null) chosen.set(String(r.personId), (chosen.get(String(r.personId)) ?? 0) + 1)
+  }
+  const resolutionLinks = new Set()
+  const fail = (h, message) => {
+    close.push(h)
+    desired.push(resolutionFailed(h, message))
+    holdDecision({ constituentId: String(h.lglConstituentId), action: 'resolution' }, 'resolution-failed')
+    counts.resolution.failed++
+  }
+  for (const h of latest) {
+    const x = String(h.lglConstituentId)
+    const r = resolutionOf(h)
+    const pid = r.personId == null ? null : String(r.personId)
+    const now = linkedTo.get(x)
+    if (now) {
+      if (r.kind === 'create' || (r.kind === 'link' && String(now.personId) === pid)) {
+        close.push(h)
+        counts.resolution.done++
+        decisions.push({ kind: 'unlinked', constituentId: x, personId: String(now.personId), action: 'none', outcome: 'skip', note: 'resolution-done' })
+      } else fail(h, `This LGL donor is already linked to ${personName(now)} in VG.`)
+      continue
+    }
+    if (!byId.has(x)) { fail(h, 'This donor is no longer in LGL.'); continue }
+    if (!isUnlinkedDonor.has(x)) { fail(h, 'This LGL record is no longer a donor.'); continue }
+    const lastGiftDate = donorInfo.get(byId.get(x).id).lastGiftDate
+    if (r.kind === 'link' && pid !== null) {
+      const p = personById.get(pid)
+      if (!p) { fail(h, 'The VG person chosen for this donor no longer exists.'); continue }
+      if (p.donor) { fail(h, `${personName(p)} is already linked to another LGL donor.`); continue }
+      if (chosen.get(pid) > 1) { fail(h, `${personName(p)} was chosen for two LGL donors; choose again.`); continue }
+      resolutionLinks.add(pid)
+      links.push({ personId: pid, constituentId: x, lastGiftDate, fingerprint: unlinkedFingerprint('link', [pid], lastGiftDate), hold: h })
+      decisions.push({ kind: 'unlinked', constituentId: x, personId: pid, action: 'link', outcome: 'write-vg', note: 'resolution' })
+      counts.resolution.link++
+    } else if (r.kind === 'create') {
+      creates.push({ constituentId: x, lastGiftDate, fingerprint: unlinkedFingerprint('create', [], lastGiftDate), ...createBody(byId.get(x)), hold: h })
+      decisions.push({ kind: 'unlinked', constituentId: x, action: 'create', outcome: 'write-vg', note: 'resolution' })
+      counts.resolution.create++
+    } else fail(h, 'The answer recorded for this donor could not be read.')
   }
 
   // Creates logged by an earlier pass (an open create-unfinished hold) whose donor row is missing.
@@ -108,6 +209,7 @@ export function planUnlinked ({ constituents, gifts, persons, holds, unlinking =
     const x = String(r.constituentId)
     const lastGiftDate = dateOf(r.constituentId)
     if (r.outcome === 'skip') {
+      if (resolvedBy.has(x)) continue // decided above
       counts.skip++
       if (importHolds.has(x)) again(importHolds.get(x))
       decisions.push({ kind: 'unlinked', constituentId: x, action: 'none', outcome: 'skip', note: r.reason })
@@ -124,6 +226,12 @@ export function planUnlinked ({ constituents, gifts, persons, holds, unlinking =
     if (prior) {
       again(prior)
       holdDecision({ constituentId: x, personId: r.personId == null ? undefined : String(r.personId), action: r.outcome }, 'vg-refused')
+      continue
+    }
+    if (r.outcome === 'link' && resolutionLinks.has(String(r.personId))) {
+      const candidates = [String(r.personId)]
+      desired.push({ lglConstituentId: x, personId: null, field: null, reason: 'already-linked-elsewhere', fingerprint: unlinkedFingerprint('already-linked-elsewhere', candidates, lastGiftDate), detail: { candidates, lastGiftDate } })
+      holdDecision({ constituentId: x, action: 'hold' }, 'already-linked-elsewhere')
       continue
     }
     if (r.outcome === 'link') {
@@ -161,8 +269,18 @@ export function planUnlinked ({ constituents, gifts, persons, holds, unlinking =
     if (p && !p.donor && !gettingOne.has(String(h.personId))) again(h)
   }
 
-  return { decisions, links, follows, unlinks, creates, finishes, holds: desired, counts }
+  // Every hold on an unlinked donor says who the donor is.
+  for (const d of desired) {
+    const c = d.personId == null ? byId.get(String(d.lglConstituentId)) : null
+    if (c) d.detail = { ...(d.detail ?? {}), lgl: lglDetail(c, donorInfo.get(c.id)?.lastGiftDate) }
+  }
+
+  return { decisions, links, follows, unlinks, creates, finishes, holds: desired, close, counts }
 }
+
+// The holds a plan closes when every write it carries succeeds: its failed and finished
+// resolutions, and the resolved holds its links and creates carry.
+export const closesOf = (u) => [...(u.close ?? []), ...[...u.links, ...u.creates].filter((w) => w.hold).map((w) => w.hold)]
 
 // The notice opened for staff when a person loses the Donor mark.
 export const unlinkedNotice = (u) => ({

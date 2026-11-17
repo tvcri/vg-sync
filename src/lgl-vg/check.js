@@ -7,6 +7,7 @@
 // printed: the caller prints CHECK FAILED or PASS FAILED.
 import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
+import { closesOf } from './unlinked.js'
 import { createStopper } from './abort.js'
 import { mergeLglChanges, lglCursorAfter, vgTouched, planCheck, foundChange } from './check-plan.js'
 import { readLglWriteCounts } from './plan.js'
@@ -235,7 +236,7 @@ export async function runCheck({
 
     // 6. The decisions file and the CHECK OK line.
     await saveDecisions()
-    const holdPreview = writeVg ? null : reconcileHolds([...plan.holds, ...plan.unlinked.holds], plan.existingHolds).counts
+    const holdPreview = writeVg ? null : reconcileHolds([...plan.holds, ...plan.unlinked.holds], plan.existingHolds, { close: closesOf(plan.unlinked).map((h) => h.holdId) }).counts
     if (!quiet) stdout(JSON.stringify({ counts: plan.counts, apply: applied?.counts ?? null, ...(holdPreview ? { holdsIfWritten: holdPreview } : {}) }, null, 2))
     const a = applied?.counts
     const uc = plan.unlinked.counts

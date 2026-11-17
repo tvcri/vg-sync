@@ -107,3 +107,39 @@ test('null field keys as empty', () => {
   const r = reconcileHolds([want({ field: null, reason: 'couple' })], [have({ field: null, reason: 'couple' })])
   assert.deepEqual(r.patch, [{ holdId: 'h1', seen: true }])
 })
+
+test('open hold, same fingerprint, new detail: seen, and its detail replaced', () => {
+  const r = reconcileHolds([want({ detail: { a: 1, lgl: { name: 'Jane Doe' } } })], [have()])
+  assert.deepEqual(r.patch, [{ holdId: 'h1', seen: true, detail: { a: 1, lgl: { name: 'Jane Doe' } } }])
+  assert.deepEqual([r.counts.seen, r.counts.refreshed], [1, 1])
+})
+
+test('a detail that differs only in key order (as MySQL returns JSON) is the same detail', () => {
+  const r = reconcileHolds([want({ detail: { b: { y: 1, x: 2 }, a: [1, 2] } })], [have({ detail: { a: [1, 2], b: { x: 2, y: 1 } } })])
+  assert.deepEqual(r.patch, [{ holdId: 'h1', seen: true }])
+  assert.equal(r.counts.refreshed, 0)
+})
+
+test('dismissed hold, same fingerprint, new detail: stays dismissed, detail replaced', () => {
+  const r = reconcileHolds([want({ detail: { a: 2 } })], [have({ state: 'dismissed' })])
+  assert.deepEqual(r.patch, [{ holdId: 'h1', detail: { a: 2 } }])
+  assert.deepEqual([r.counts.stillDismissed, r.counts.refreshed], [1, 1])
+})
+
+test('a hold named in close is closed, and a desired hold with its key opens as a new row', () => {
+  const k = { personId: null, field: null, reason: 'resolution-failed' }
+  const r = reconcileHolds([want({ ...k, fingerprint: 'f2' })], [have({ ...k, resolution: { kind: 'create' } })], { close: ['h1'] })
+  assert.deepEqual(r.patch, [{ holdId: 'h1', state: 'closed' }])
+  assert.equal(r.open.length, 1)
+  assert.deepEqual([r.counts.closed, r.counts.opened], [1, 1])
+})
+
+test('close names a hold of any reason, owned or not', () => {
+  const r = reconcileHolds([], [have({ personId: null, field: null, reason: 'import-skip' })], { close: ['h1'] })
+  assert.deepEqual(r.patch, [{ holdId: 'h1', state: 'closed' }])
+})
+
+test('step 4 owns resolution-failed', () => {
+  const r = reconcileHolds([], [have({ personId: null, field: null, reason: 'resolution-failed' })])
+  assert.deepEqual(r.patch, [{ holdId: 'h1', state: 'closed' }])
+})
