@@ -12,6 +12,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { resolveDate } from './scenario.js'
+import { resolveHold as dbResolveHold } from './vg-db.js'
 
 export const STATE_FILE = 'out/harness-state.json'
 const KINDS = ['street_addresses', 'email_addresses', 'phone_numbers']
@@ -122,7 +123,9 @@ export async function wipeLgl({ lglWriter, log = () => {} }) {
   return found.length
 }
 
-export async function applyEdit(edit, stateEntry, { lglWriter, vgStaff, env = {}, today }) {
+// scenarios: every seeded scenario's state entry (resolve.to names one). resolveHold writes a
+// resolution into the dev sync_hold (vg-db.js).
+export async function applyEdit(edit, stateEntry, { lglWriter, vgStaff, env = {}, today, scenarios = {}, resolveHold = dbResolveHold }) {
   const { constituentId, personIds } = stateEntry
   // One person's edit, or a list of them (a couple whose partners both change in one phase).
   for (const one of asList(edit.vg)) {
@@ -164,6 +167,22 @@ export async function applyEdit(edit, stateEntry, { lglWriter, vgStaff, env = {}
       }
       if (gifts) await addGifts(constituentId, gifts, { lglWriter, ids: giftIds({ lglWriter, env }), today })
     }
+  }
+  if (edit.resolve) {
+    // Staff answer the scenario's unlinked-donor hold: link to its own first person, or to another
+    // scenario's (to), or create a new person.
+    const { kind, to } = edit.resolve
+    let resolution = { kind }
+    if (kind === 'link') {
+      const target = to === undefined ? stateEntry : scenarios[to]
+      if (!target) throw new Error(`edit.resolve: no scenario ${to}`)
+      resolution = { kind, personId: String(target.personIds[0]) }
+    }
+    const holds = await vgStaff.listHolds(['open', 'dismissed'])
+    const mine = holds.filter((h) => h.personId == null && String(h.lglConstituentId) === String(constituentId))
+    const hold = mine.find((h) => h.state === 'open') ?? mine[0]
+    if (!hold) throw new Error('edit.resolve: no unlinked-donor hold on this scenario\'s constituent')
+    await resolveHold(env, hold.holdId, resolution)
   }
   if (edit.dismiss) {
     const { field, reason, dismissalKind } = edit.dismiss

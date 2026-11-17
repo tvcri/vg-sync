@@ -163,3 +163,22 @@ test('applyEdit syncLog appends written rows for the person and field, one per i
   }
   await assert.rejects(applyEdit({ syncLog: { field: 'email', runs: 0 } }, st, { ...f, env, today: TODAY }), /runs/)
 })
+
+test('applyEdit resolve records a resolution on the scenario\'s unlinked-donor hold, as VG\'s endpoint will', async () => {
+  const st = { constituentId: 5, personIds: ['1'] }
+  const f = fakes()
+  f.vgStaff.listHolds = async () => [
+    { holdId: '60', personId: '1', lglConstituentId: '5', reason: 'never-agreed', state: 'open' },
+    { holdId: '61', personId: null, lglConstituentId: '5', reason: 'import-skip', state: 'dismissed' },
+    { holdId: '62', personId: null, lglConstituentId: '9', reason: 'name-only', state: 'open' },
+  ]
+  const resolved = []
+  const resolveHold = async (...a) => { resolved.push(a) }
+  await applyEdit({ resolve: { kind: 'create' } }, st, { ...f, env, today: TODAY, resolveHold })
+  await applyEdit({ resolve: { kind: 'link' } }, st, { ...f, env, today: TODAY, resolveHold })
+  await applyEdit({ resolve: { kind: 'link', to: 'other' } }, st, { ...f, env, today: TODAY, resolveHold, scenarios: { other: { constituentId: 9, personIds: ['7'] } } })
+  assert.deepEqual(resolved.map((a) => a.slice(1)), [['61', { kind: 'create' }], ['61', { kind: 'link', personId: '1' }], ['61', { kind: 'link', personId: '7' }]])
+  assert.equal(resolved[0][0], env)
+  await assert.rejects(applyEdit({ resolve: { kind: 'link', to: 'nobody' } }, st, { ...f, env, today: TODAY, resolveHold }), /no scenario nobody/)
+  await assert.rejects(applyEdit({ resolve: { kind: 'create' } }, { constituentId: 6, personIds: [] }, { ...f, env, today: TODAY, resolveHold }), /no unlinked-donor hold/)
+})

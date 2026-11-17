@@ -77,6 +77,24 @@ const readBack = (users) =>
    WHERE rg.villageId IS NULL AND ud.username IN (${[...new Set(expectedGrants(users).map(([u]) => u))].map(sqlString).join(', ')})
    ORDER BY ud.username, rg.roleId;`
 
+// A staff resolution recorded on an unlinked donor's hold, written straight into the dev sync_hold
+// until VG has its POST /sync/holds/{holdId}/resolution: the hold is reopened if it was dismissed,
+// as that endpoint does. Pure; the values are escaped.
+export function resolveSql(holdId, resolution) {
+  if (!/^\d+$/.test(String(holdId))) throw new Error(`resolveSql: holdId must be digits, not ${holdId}`)
+  return `UPDATE sync_hold SET resolution = CAST(${sqlString(JSON.stringify(resolution))} AS JSON), resolvedAt = NOW(3), ` +
+    "state = 'open', dismissalKind = NULL, dismissedAt = NULL, dismissedUserId = NULL " +
+    `WHERE holdId = ${Number(holdId)} AND personId IS NULL;`
+}
+
+export async function resolveHold(env, holdId, resolution, { exec = defaultExec } = {}) {
+  const user = env.HARNESS_DB_USER || 'root'
+  const res = await exec('docker',
+    ['exec', '-i', '-e', 'MYSQL_PWD', env.HARNESS_DB_CONTAINER, 'mysql', `-u${user}`, '-N', '-B', env.HARNESS_DB_SCHEMA],
+    { input: resolveSql(holdId, resolution) + '\n', env: { ...process.env, MYSQL_PWD: env.HARNESS_DB_PASSWORD } })
+  if (res.code !== 0) throw new Error(`mysql in ${env.HARNESS_DB_CONTAINER} exited ${res.code}: ${res.stderr.trim().slice(0, 300)}`)
+}
+
 // Ruling R1: the service runs with every variable the example file names
 // (commented or not) removed, so the --env file always wins.
 export function serviceEnv(baseEnv, exampleText) {

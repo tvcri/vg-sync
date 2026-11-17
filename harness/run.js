@@ -363,7 +363,7 @@ export async function main (argv, { log = console.log } = {}) {
     } else if (step.kind === 'edit') {
       log(`edit ${s.name} phase ${step.phase + 1}`)
       try {
-        await applyEdit(s.phases[step.phase].edit, state.scenarios[s.name], { lglWriter, vgStaff, env, today })
+        await applyEdit(s.phases[step.phase].edit, state.scenarios[s.name], { lglWriter, vgStaff, env, today, scenarios: state.scenarios })
       } catch (err) {
         fail(s.name, step.phase, 'edit', 'applied', err.message)
       }

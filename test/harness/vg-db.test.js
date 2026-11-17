@@ -145,3 +145,10 @@ test('reseedVg refuses when the container does not publish HARNESS_DB_PORT', asy
   await assert.rejects(reseedVg(env, { ...f, stdout: () => {}, exampleText: '' }), /publish/)
   assert.equal(f.calls.spawn.length, 0)
 })
+
+test('resolveSql records a resolution and reopens the hold, as VG\'s endpoint does', async () => {
+  const { resolveSql } = await import('../../harness/vg-db.js')
+  const sql = resolveSql('61', { kind: 'link', personId: "7'" })
+  assert.match(sql, /^UPDATE sync_hold SET resolution = CAST\('\{\\"kind\\":\\"link\\",\\"personId\\":\\"7\\'\\"\}' AS JSON\), resolvedAt = NOW\(3\), state = 'open', dismissalKind = NULL, dismissedAt = NULL, dismissedUserId = NULL WHERE holdId = 61 AND personId IS NULL;/)
+  assert.throws(() => resolveSql('6 1', { kind: 'create' }), /holdId/)
+})
