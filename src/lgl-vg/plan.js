@@ -22,18 +22,29 @@ const FLAP_DAYS = 30
 // The most sync_log rows one read returns; a read that fills it may have missed some.
 export const SYNC_LOG_LIMIT = 5000
 
-// The sync_log read for the flapping guard: written rows since thirty days before nowMs.
-export const lglWriteLogQuery = (nowMs) => ({
-  outcome: 'written', since: new Date(nowMs - FLAP_DAYS * 86_400_000).toISOString(), limit: SYNC_LOG_LIMIT,
+// The sync_log read for the flapping guard: one person's written rows since thirty days before nowMs.
+export const lglWriteLogQuery = (nowMs, personId) => ({
+  personId: String(personId), outcome: 'written', since: new Date(nowMs - FLAP_DAYS * 86_400_000).toISOString(), limit: SYNC_LOG_LIMIT,
 })
 
-// planLinked's lglWriteCounts from those rows: "personId|field" -> the number of distinct runs that
-// wrote it (one write logs a row per call). A read that fills the limit cannot be counted: it throws
-// a final error (a retry reads the same log), and the run writes nothing.
-export function countLglWrites(rows) {
-  if (rows.length >= SYNC_LOG_LIMIT) {
-    throw Object.assign(new Error(`the LGL write log of ${FLAP_DAYS} days has ${SYNC_LOG_LIMIT} rows or more (the read limit), so the flapping guard cannot count it; nothing was written`), { final: true })
+// The flapping guard's counts for the people a plan guarded (plan.lglGuarded), one log read each.
+// read wraps each read (a run's stop). A read that fills the limit cannot be counted: it throws a
+// final error (a retry reads the same log), and the run writes nothing.
+export async function readLglWriteCounts(vg, personIds, nowMs, read = (p) => p) {
+  const rows = []
+  for (const personId of personIds) {
+    const got = await read(vg.getSyncLog(lglWriteLogQuery(nowMs, personId)))
+    if (got.length >= SYNC_LOG_LIMIT) {
+      throw Object.assign(new Error(`the LGL write log of ${FLAP_DAYS} days for VG person ${personId} has ${SYNC_LOG_LIMIT} rows or more (the read limit), so the flapping guard cannot count it; nothing was written`), { final: true })
+    }
+    rows.push(...got)
   }
+  return countLglWrites(rows)
+}
+
+// planLinked's lglWriteCounts from those rows: "personId|field" -> the number of distinct runs that
+// wrote it (one write logs a row per call).
+export function countLglWrites(rows) {
   const runs = new Map()
   for (const r of rows) {
     if (r.personId == null || r.field == null) continue
@@ -70,7 +81,10 @@ function clearsPhoneSlot(lgl, vg) {
 
 // lglSend(constituentId): true when an LGL write to that constituent will be sent (writing on and
 // allowed). writeLgl only names why one is not: 'write-lgl off' or 'not-allowed'.
-// lglWriteCounts: "personId|field" -> LGL writes logged in the last thirty days.
+// lglWriteCounts: "personId|field" -> LGL writes logged in the last thirty days. The plan's
+// lglGuarded lists the people the flapping guard looked up: a caller plans once with no counts, reads
+// the log for those people only, and plans again (sent or not, so a dry run or a run with LGL writes
+// off keeps the flapping holds a write run opened).
 export function planLinked({
   constituents, gifts, persons, memory, refusals, policy, config,
   lglSend = () => false, writeLgl = false, lglWriteCounts = new Map(),
@@ -103,6 +117,7 @@ export function planLinked({
   const personWrites = new Map() // personId -> Write
   const donorWrites = []
   const lglWrites = []
+  const lglGuarded = new Set()
   const fieldCounts = Object.fromEntries(FIELDS.map((f) => [f, {}]))
   const counts = { pairs: 0, couples: 0, lglMissing: 0, noLongerDonor: 0, lastGiftDate: 0 }
   const tally = (f, k) => { fieldCounts[f][k] = (fieldCounts[f][k] ?? 0) + 1 }
@@ -139,6 +154,7 @@ export function planLinked({
       guard('lgl-refused', () => fpWrite, (x) => (refusal[rows.indexOf(x)] ?? any).detail)
       return true
     }
+    for (const x of rows) lglGuarded.add(String(x.dec.personId))
     const writes = (x) => lglWriteCounts.get(`${x.dec.personId}|${f}`) ?? 0
     if (rows.some((x) => writes(x) > FLAP_LIMIT)) {
       guard('flapping', (x) => x.r.fp, (x) => ({ ...x.r.detail, case: kase, lglWrites: writes(x) }))
@@ -312,7 +328,7 @@ export function planLinked({
   const writes = [...personWrites.values(), ...donorWrites]
   const lglSent = lglWrites.filter((w) => w.send)
   return {
-    decisions, writes, agree, holds, unlinks, lglWrites,
+    decisions, writes, agree, holds, unlinks, lglWrites, lglGuarded: [...lglGuarded].sort(),
     counts: {
       ...counts,
       fields: fieldCounts,

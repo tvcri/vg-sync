@@ -446,14 +446,14 @@ const logRow = (personId, field, runId) => ({
 })
 const decisionsOf = (f) => f.files[0].text.trim().split('\n').map((l) => JSON.parse(l))
 
-test('full pass: the LGL write log of 30 days is read once and counted per person and field', async () => {
+test('full pass: the LGL write log of 30 days is read for each person the guard looks up, and counted per field', async () => {
   // three distinct runs wrote 7's email (run 3 logged two calls); other fields and people do not count
   const rows = [logRow(7, 'email', 1), logRow(7, 'email', 2), logRow(7, 'email', 3), logRow(7, 'email', 3),
     logRow(7, 'address', 4), logRow(7, 'address', 5), logRow(8, 'email', 6), logRow(8, 'email', 7)]
   const f = fakes({ w: emailWorld(1), syncLog: rows })
   assert.equal(await runFullPass(f.args({ config: allowAll, writeVg: true, writeLgl: true })), 0)
   const reads = f.calls.filter((c) => c[0] === 'getSyncLog')
-  assert.deepEqual(reads, [['getSyncLog', { outcome: 'written', since: '2026-10-13T10:00:00.000Z', limit: 5000 }]])
+  assert.deepEqual(reads, [['getSyncLog', { personId: '7', outcome: 'written', since: '2026-10-13T10:00:00.000Z', limit: 5000 }]])
   assert.ok(f.names().includes('addEntry'), 'three writes in thirty days: not flapping, written')
 
   // a fourth run makes it more than three: held flapping, nothing sent
@@ -464,6 +464,12 @@ test('full pass: the LGL write log of 30 days is read once and counted per perso
   assert.deepEqual([d.outcome, d.note], ['hold', 'flapping'])
   const opened = g.calls.find((c) => c[0] === 'createSyncHolds')[1]
   assert.deepEqual(opened.map((h) => [h.personId, h.field, h.reason]), [['7', 'email', 'flapping']])
+
+  // a run that writes VG but not LGL still finds it flapping, so it keeps that hold rather than closing it
+  const h = fakes({ w: emailWorld(1), syncLog: [...rows, logRow(7, 'email', 9)] })
+  assert.equal(await runFullPass(h.args({ config: allowAll, writeVg: true })), 0)
+  const e = decisionsOf(h).find((x) => x.field === 'email')
+  assert.deepEqual([e.outcome, e.note], ['hold', 'flapping'])
 })
 
 test('full pass: 5000 log rows (the limit) fails the pass safe: cannot count', async () => {
@@ -479,7 +485,8 @@ test('full pass: 5000 log rows (the limit) fails the pass safe: cannot count', a
 test('full pass: dry with an allow-list prints calls and sends nothing', async () => {
   const f = fakes({ w: emailWorld(1) })
   assert.equal(await runFullPass(f.args({ config: allowAll })), 0)
-  for (const n of [...WRITES, ...LGL_WRITES, 'getSyncLog', 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  for (const n of [...WRITES, ...LGL_WRITES, 'getConstituentFull']) assert.ok(!f.names().includes(n), n)
+  assert.ok(f.names().includes('getSyncLog'), 'a dry run reads the log as a write run would, so its holds match')
   const d = decisionsOf(f).find((x) => x.field === 'email')
   assert.deepEqual([d.outcome, d.note], ['deferred', 'write-lgl off'])
   assert.ok(d.calls.length >= 1, 'the decision carries the calls it would make')

@@ -9,7 +9,7 @@ import { applyPlan } from './apply.js'
 import { reconcileHolds } from './holds.js'
 import { createStopper } from './abort.js'
 import { mergeLglChanges, lglCursorAfter, vgTouched, planCheck, foundChange } from './check-plan.js'
-import { lglWriteLogQuery, countLglWrites } from './plan.js'
+import { readLglWriteCounts } from './plan.js'
 import { allowedForLgl } from './config.js'
 
 const TWO_MINUTES = 2 * 60 * 1000
@@ -160,13 +160,16 @@ export async function runCheck({
     checkStop()
     const holds = await fromVg(vg.getSyncHolds(['open', 'dismissed']))
     checkStop()
-    // The flapping guard's count, only when LGL writes can be sent.
-    const lglWriteCounts = writeLgl ? countLglWrites(await fromVg(vg.getSyncLog(lglWriteLogQuery(now())))) : new Map()
-    checkStop()
     const lglSend = (id) => writeLgl && allowedForLgl(config, id)
-    const plan = planCheck({
+    const planWith = (lglWriteCounts) => planCheck({
       touched, cache, persons, memory, holds, policy, config, today: at.slice(0, 10), lglSend, writeLgl, lglWriteCounts,
     })
+    let plan = planWith(new Map())
+    // The flapping guard's counts, for the people it looked up only; then the plan again with them.
+    if (plan.lglGuarded.length) {
+      plan = planWith(await readLglWriteCounts(vg, plan.lglGuarded, now(), fromVg))
+      checkStop()
+    }
     found = foundChange(plan)
     if (!found) {
       commit()

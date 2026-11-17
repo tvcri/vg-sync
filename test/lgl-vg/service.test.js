@@ -354,12 +354,11 @@ test('service: WRITE_LGL reaches both checks and the full pass', async () => {
   const gift = { id: 5, constituent_id: 11, received_date: '2026-01-05', gift_type_id: 1, fund_id: 9, payment_type_id: 1 }
   const s = checkSetup({ pullConstituents: async () => [jane] })
   const starts = []
-  const logReads = []
   let feed = 0
   Object.assign(s.deps.vg, {
     listPersons: async () => [person],
     startRun: async (r) => { starts.push([r.kind, r.switches]); return { runId: starts.length } },
-    getSyncLog: async (q) => { logReads.push(q.outcome); return [] },
+    getSyncLog: async () => [],
     getLinkedPersons: async () => [person],
     putSyncFields: async (rows) => rows.length,
     createSyncHolds: async () => [],
@@ -380,5 +379,4 @@ test('service: WRITE_LGL reaches both checks and the full pass', async () => {
   const kinds = new Set(starts.map(([k]) => k))
   assert.deepEqual([...kinds].sort(), ['full', 'lgl-check', 'vg-check'], s.out.join('\n'))
   for (const [kind, switches] of starts) assert.deepEqual(switches, { writeVg: true, writeLgl: true }, kind)
-  assert.ok(logReads.length >= 3, 'each run read the LGL write log')
 })

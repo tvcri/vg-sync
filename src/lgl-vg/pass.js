@@ -1,7 +1,7 @@
 // The full pass: read LGL and VG, plan every linked pair and every unlinked donor, and (only with
 // writeVg) apply the plan. LGL writes are sent only with writeLgl (which needs writeVg), and only to
 // constituents on the allow-list. Without writeVg, VG sees GET requests only.
-import { planLinked, lglWriteLogQuery, countLglWrites } from './plan.js'
+import { planLinked, readLglWriteCounts } from './plan.js'
 import { allowedForLgl } from './config.js'
 import { planUnlinked } from './unlinked.js'
 import { applyPlan } from './apply.js'
@@ -76,9 +76,6 @@ export async function runFullPass({
     checkStop()
     const last = await read(vg.lastFullRun())
     checkStop()
-    // The flapping guard's count, only when LGL writes can be sent.
-    const lglWriteCounts = writeLgl ? countLglWrites(await read(vg.getSyncLog(lglWriteLogQuery(now())))) : new Map()
-    checkStop()
 
     const lastCount = last?.counts?.constituents
     if (Number.isFinite(lastCount) && lastCount > 0) {
@@ -94,7 +91,13 @@ export async function runFullPass({
     const refusals = holdsRead.filter((h) => (h.state === 'open' || h.state === 'dismissed') &&
       (h.reason === 'vg-refused' || h.reason === 'lgl-refused'))
     const lglSend = (id) => writeLgl && allowedForLgl(config, id)
-    const plan = planLinked({ constituents, gifts, persons, memory, refusals, policy, config, lglSend, writeLgl, lglWriteCounts })
+    const planWith = (lglWriteCounts) => planLinked({ constituents, gifts, persons, memory, refusals, policy, config, lglSend, writeLgl, lglWriteCounts })
+    let plan = planWith(new Map())
+    // The flapping guard's counts, for the people it looked up only; then the plan again with them.
+    if (plan.lglGuarded.length) {
+      plan = planWith(await readLglWriteCounts(vg, plan.lglGuarded, now(), read))
+      checkStop()
+    }
     const today = new Date(now()).toISOString().slice(0, 10)
     const unlinkedPlan = (people, unlinking) => planUnlinked({ constituents, gifts, persons: people, holds: holdsRead, unlinking, config, today })
     const unlinked = unlinkedPlan(persons, plan.unlinks)

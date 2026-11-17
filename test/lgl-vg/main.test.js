@@ -60,6 +60,7 @@ function harness({ lgl = true, signIn = true, files = {}, vgUser = {}, needsAck 
       if (u.pathname === '/api/sync/runs') return json(runs)
       if (u.pathname === '/api/sync/fields') return json(memory)
       if (u.pathname === '/api/sync/holds') return json([])
+      if (u.pathname === '/api/sync/log') return json([])
       if (u.pathname === '/api/sync/changes') return json(feed)
       if (u.pathname === '/api/persons') return json(personsBody ?? persons, personsStatus)
     }

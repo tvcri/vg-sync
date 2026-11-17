@@ -148,9 +148,11 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
     async appendSyncLog(rows) {
       return sum(await inBatches('POST', '/sync/log', rows), 'appended')
     },
-    // outcome is one value or an array; each is sent as a repeated outcome param. since is omitted when not given.
-    getSyncLog({ outcome, since, limit = 5000 }) {
+    // outcome is one value or an array; each is sent as a repeated outcome param. personId and since
+    // are omitted when not given.
+    getSyncLog({ personId, outcome, since, limit = 5000 }) {
       const q = new URLSearchParams([...[].concat(outcome ?? []).map((o) => ['outcome', o]), ['limit', String(limit)]])
+      if (personId != null) q.set('personId', String(personId))
       if (since) q.set('since', since)
       return get(`/sync/log?${q}`)
     },
