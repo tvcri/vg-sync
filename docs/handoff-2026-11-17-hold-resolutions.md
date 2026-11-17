@@ -15,6 +15,26 @@ VG's side is designed in
 VG side has not been built yet. The order is: this repo first, then VG in one
 PR.
 
+## Status (2026-11-17, end of day)
+
+The sync's half is built on branch `hold-resolutions` (unmerged, unpushed).
+The design spec's "Staff resolutions" section records the rules as built.
+Unit tests pass. A dry full pass against production LGL and the 2026-11-17
+production snapshot leaves day 1 at 152 open holds; 197 existing unlinked
+holds would gain `detail.lgl`. The harness scenarios
+(`harness/scenarios/resolutions.js`, 4 of them) passed against a dev API
+temporarily patched to return the four columns. That patch is reverted and
+the columns dropped from the dev database, so those scenarios fail until
+VG's PR is in the dev API. Notes for VG's side:
+
+- A schema property of any JSON (as `resolution` is) is declared like
+  `detail`, with a description and no `nullable`: ajv rejects `nullable`
+  without `type`, and every `GET /sync/holds` then answers 500.
+- The sync reads `resolution` and `resolvedAt` (the latest resolution on a
+  donor wins); it ignores `resolvedUserId` and `closedUserId`.
+- It closes a resolved hold through `PATCH /sync/holds` (open → closed),
+  whatever its reason, and sends closes before creates.
+
 ## The decision
 
 Of the two approaches considered, the engineer picked A (2026-11-17):
