@@ -59,9 +59,9 @@ test('phase args from the lockstep group are merged once', () => {
 })
 
 test('parseArgs reads the flags', () => {
-  assert.deepEqual(parseArgs([]), { only: null, step: 7, overnight: false, resume: false, guardsOnly: false })
+  assert.deepEqual(parseArgs([]), { only: null, step: 7, overnight: false, resume: false, guardsOnly: false, seedOnly: false })
   const o = parseArgs(['--only', 'smoke', '--only', 'names', '--step', '4', '--overnight', '--resume', '--guards-only'])
-  assert.deepEqual(o, { only: ['smoke', 'names'], step: 4, overnight: true, resume: true, guardsOnly: true })
+  assert.deepEqual(o, { only: ['smoke', 'names'], step: 4, overnight: true, resume: true, guardsOnly: true, seedOnly: false })
   assert.throws(() => parseArgs(['--step', 'x']), /--step/)
   assert.throws(() => parseArgs(['--only']), /--only/)
   assert.throws(() => parseArgs(['--bogus']), /Unknown/)
@@ -198,4 +198,24 @@ test('planRun puts the phase env on the pass step, empty when none', () => {
 test('passEnv: the service env without the example file\'s names, then the phase env on top', () => {
   const env = passEnv({ PATH: '/bin', LGL_WRITE_ALLOW: 'all', OTHER: 'x' }, 'LGL_WRITE_ALLOW=\n# OTHER=\n', { LGL_WRITE_ALLOW: '1' })
   assert.deepEqual(env, { PATH: '/bin', LGL_WRITE_ALLOW: '1' })
+})
+
+test('parseArgs: --seed-only, alone or with --only, never with --resume or --overnight', () => {
+  assert.equal(parseArgs(['--seed-only']).seedOnly, true)
+  assert.deepEqual(parseArgs(['--seed-only', '--only', 'couples']).only, ['couples'])
+  assert.throws(() => parseArgs(['--seed-only', '--resume']), /--seed-only/)
+  assert.throws(() => parseArgs(['--seed-only', '--overnight']), /--seed-only/)
+})
+
+test('the playground loads as scenarios, with invented example.org emails and no phases', async () => {
+  const { PLAYGROUND } = await import('../../harness/playground.js')
+  const { loadScenarios } = await import('../../harness/scenario.js')
+  const list = loadScenarios([{ area: 'playground', default: PLAYGROUND }])
+  assert.ok(list.length >= 4)
+  for (const s of list) {
+    assert.deepEqual(s.phases, [])
+    assert.match(s.name, /^playground-/)
+    const emails = JSON.stringify(s).match(/[\w.]+@[\w.]+/g) ?? []
+    for (const e of emails) assert.match(e, /@example\.org$/)
+  }
 })

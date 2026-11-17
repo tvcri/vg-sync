@@ -2,8 +2,12 @@
 // The runner: guards, reseed, then every selected scenario's phases in lockstep
 // against the LGL trial account and the dev VG, one real service pass per phase.
 //
-//   npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only]
+//   npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only] [--seed-only]
 //   (--step defaults to 7)
+//
+// --seed-only: reseed, seed the playground (harness/playground.js), or the --only scenarios' starting
+// records, run one full pass that writes both sides, print who was seeded, and stop. For running the
+// service by hand against the same targets.
 //
 // Every run reseeds unless --resume. Records are left in place after a run for
 // inspection; the next run wipes them first. planRun is pure and unit-tested;
@@ -22,6 +26,7 @@ import { reseedVg, serviceEnv } from './vg-db.js'
 import { STATE_FILE, applyEdit, seedScenarios, wipeLgl } from './seed.js'
 import { loadScenarios, phaseCount, resolveDate, selectScenarios } from './scenario.js'
 import { checkScenario } from './expect.js'
+import { PLAYGROUND } from './playground.js'
 import { createLglClient } from '../src/lgl-vg/lgl.js'
 
 const REPO = new URL('..', import.meta.url).pathname
@@ -35,12 +40,13 @@ const asList = (v) => (v === undefined || v === null ? [] : [].concat(v))
 // --- Pure parts -------------------------------------------------------------
 
 export function parseArgs (argv) {
-  const opts = { only: null, step: 7, overnight: false, resume: false, guardsOnly: false }
+  const opts = { only: null, step: 7, overnight: false, resume: false, guardsOnly: false, seedOnly: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--overnight') opts.overnight = true
     else if (a === '--resume') opts.resume = true
     else if (a === '--guards-only') opts.guardsOnly = true
+    else if (a === '--seed-only') opts.seedOnly = true
     else if (a === '--only') {
       const v = argv[++i]
       if (!v || v.startsWith('--')) throw new Error('--only needs a scenario name or area')
@@ -51,6 +57,7 @@ export function parseArgs (argv) {
       opts.step = Number(v)
     } else throw new Error(`Unknown option ${a}`)
   }
+  if (opts.seedOnly && (opts.resume || opts.overnight)) throw new Error('--seed-only takes neither --resume nor --overnight')
   return opts
 }
 
@@ -273,7 +280,7 @@ export async function main (argv, { log = console.log } = {}) {
   try {
     opts = parseArgs(argv)
   } catch (err) {
-    log(`${err.message}\nUsage: npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only]`)
+    log(`${err.message}\nUsage: npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only] [--seed-only]`)
     return 2
   }
   const env = parseEnv(readFileSync(ENV_FILE, 'utf8'))
@@ -288,6 +295,7 @@ export async function main (argv, { log = console.log } = {}) {
   if (opts.guardsOnly) return 0
 
   const list = loadScenarios(await loadScenarioModules())
+  if (opts.seedOnly) return seedOnly({ opts, list, env, lglWriter, log })
   let selected
   let saved = null
   if (opts.resume) {
@@ -414,6 +422,49 @@ export async function main (argv, { log = console.log } = {}) {
   log(`\n${report}\nReport: ${join(outDir, 'report.txt')}`)
   const anyFailed = selected.some((sc) => failedOutsideKnown(sc, results[sc.name]))
   return anyFailed || passFailures.length ? 1 : 0
+}
+
+// --seed-only: a clean starting point for running the service by hand. The pass that follows the seed
+// writes both sides (as every harness pass does), so the people are linked and agreeing when it stops.
+async function seedOnly ({ opts, list, env, lglWriter, log }) {
+  let selected = loadScenarios([{ area: 'playground', default: PLAYGROUND }])
+  if (opts.only) {
+    const unmatched = opts.only.filter((o) => !list.some((s) => s.name === o || s.area === o))
+    if (unmatched.length) {
+      log(`--only matched no scenario or area: ${unmatched.join(', ')}`)
+      return 1
+    }
+    selected = selectScenarios(list, { only: opts.only, step: opts.step, overnight: true }).selected
+  }
+  const outDir = `out/seed-${stampOf()}`
+  await mkdir(outDir, { recursive: true })
+  const today = localToday()
+  const vgStaff = createVgStaff({
+    apiUrl: env.VG_API_URL, oidcUrl: env.VG_OIDC_URL,
+    clientId: env.HARNESS_VG_CLIENT_ID, clientSecret: env.HARNESS_VG_CLIENT_SECRET,
+  })
+  log(`\n== Reseed: ${selected.map((s) => s.name).join(', ')}`)
+  await wipeLgl({ lglWriter, log })
+  await reseedVg(env, { envFile: join(REPO, ENV_FILE) })
+  const state = await seedScenarios(selected, { lglWriter, vgStaff, env, today, log })
+  const importing = selected.filter((s) => s.importDecision)
+  if (importing.length) {
+    const file = join(outDir, 'import-run.json')
+    await writeFile(file, JSON.stringify(importRun(importing, state, today), null, 2) + '\n')
+    const code = await runPass({ dir: outDir, args: [], log, command: ['seed-import', '--file', file], logName: 'seed-import.log' })
+    if (code !== 0) return code
+  }
+  log('\n== First pass (writes VG and LGL)')
+  const code = await runPass({ dir: outDir, args: [], log })
+  log('\nSeeded (LGL constituent -> VG people):')
+  for (const s of selected) {
+    const e = state.scenarios[s.name]
+    log(`  ${s.name}: ${e.constituentId} -> ${e.personIds.join(', ') || '(none)'}`)
+  }
+  log(`\nFirst pass exited ${code}; its decisions are in ${outDir}.`)
+  log('Run the service: WRITE_VG=true WRITE_LGL=true node src/lgl-vg/main.js --env .env.harness')
+  log('The next harness run wipes these records.')
+  return code
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

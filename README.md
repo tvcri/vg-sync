@@ -237,7 +237,7 @@ prints the fund and payment-type ids it needs. The dev VG stack must be up,
 and the app's demo-data generator available (`HARNESS_GENERATOR_DIR`).
 
 ```
-npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only]
+npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--guards-only] [--seed-only]
 ```
 
 - `--only` runs the named scenario or every scenario in an area (a file name
@@ -250,6 +250,19 @@ npm run harness -- [--only <name|area>] [--step N] [--overnight] [--resume] [--g
 - `--resume` continues a saved run from `out/harness-state.json` without
   reseeding.
 - `--guards-only` checks that both targets are the test ones (local hosts, the dev stack's ports, never the demo stack) and stops.
+- `--seed-only` sets up a starting point for running the service by hand:
+  it reseeds, seeds the playground (`harness/playground.js`, a few invented
+  people), or the starting records of the `--only` scenarios, runs one full
+  pass that writes both sides so they are linked and agreeing, prints each
+  LGL constituent id with its VG people, and stops. Then run the service
+  against the same targets and make edits in the dev VG app or the LGL trial
+  web app:
+
+  ```
+  WRITE_VG=true WRITE_LGL=true node src/lgl-vg/main.js --env .env.harness
+  ```
+
+  Stop the service before the next harness run, which wipes these records.
 
 What it touches: the LGL trial account (it deletes every constituent carrying
 the harness marker, then creates the scenarios'), and the dev VG database,
