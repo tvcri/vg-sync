@@ -16,3 +16,8 @@ export function createStopper(signal, { label, minutes }) {
   }
   return { read, checkStop, stopError, timedOut }
 }
+
+// A write LGL or VG refused (bad request, gone, unprocessable): held, not retried.
+export const isRefusal = (e) => [400, 404, 422].includes(e?.status)
+// True once the run's signal has fired.
+export const aborted = (signal) => signal?.aborted === true

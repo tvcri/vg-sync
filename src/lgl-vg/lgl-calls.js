@@ -1,12 +1,11 @@
 // Turns one LGL write (VG's value for a field) into the LGL API calls that make it LGL's value.
 // Pure: no I/O. The plan prints these calls in a dry run; apply sends them in order on a fresh read.
-import { lglFields, comparable, hasDefaultNames, isMobile, lglAddress } from './fields.js'
+import { lglFields, comparable, hasDefaultNames, isMobile, lglAddress, squash, phoneKey } from './fields.js'
 
 const NAME_KEYS = { firstName: 'first_name', lastName: 'last_name', suffix: 'suffix', nickname: 'nick_name' }
 // Only these names make up LGL's default addressee and salutation.
 const ADDRESSEE_NAMES = new Set(['firstName', 'lastName', 'suffix'])
 
-const squash = (s) => String(s ?? '').trim().replace(/\s+/g, ' ')
 
 function setCall (id, write, constituent, addresseeSetting) {
   const { field, value } = write
@@ -41,7 +40,6 @@ const ENTRY = {
     body: (v) => ({ address: v, email_type_name: 'Home' }),
   },
 }
-const phoneKey = (n) => comparable('phones', { phone: n })
 const phoneOf = (e) => e.normalized_number || e.number
 
 // The calls that make `value` the entry for one slot: revive a matching entry or add one, then

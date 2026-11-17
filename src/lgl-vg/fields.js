@@ -151,6 +151,11 @@ function addressText (text, { suffixes, houseNumber }) {
 
 const phoneDigits = (v) => String(v ?? '').replace(/\s*(?:x|ext\.?)\s*\d+\s*$/i, '').replace(/\D/g, '').slice(-10)
 
+// A phone number's comparable key: the one normalisation the plan and the LGL calls both use.
+export const phoneKey = (n) => comparable('phones', { phone: n })
+// The fields whose memory row names the LGL entry (an address or email entry).
+export const ENTRY_FIELDS = new Set(['address', 'email'])
+
 export function comparable (field, value) {
   if (value == null || value === '') return ''
   switch (field) {
@@ -203,7 +208,8 @@ export function keepsNickname (lglFirst, vgFirst) {
   return parts(vgFirst).every((p) => lglParts.includes(p))
 }
 
-const squash = (s) => String(s ?? '').trim().replace(/\s+/g, ' ')
+// Trims a value and collapses its runs of whitespace to one space.
+export const squash = (s) => String(s ?? '').trim().replace(/\s+/g, ' ')
 
 // The addressee and salutation LGL fills in itself for a constituent's current name (trial-account behaviour):
 // prefix, first, last and suffix (trailing period dropped); middle name and nickname are ignored.

@@ -4,7 +4,7 @@
 // LGL), memory rows and holds.
 import { createHash } from 'node:crypto'
 import { classifyDonors } from './donors.js'
-import { FIELDS, lglFields, vgFields, comparable, lglExpect, vgPatch, mergePhones, keepsNickname } from './fields.js'
+import { FIELDS, lglFields, vgFields, comparable, lglExpect, vgPatch, mergePhones, keepsNickname, phoneKey, ENTRY_FIELDS } from './fields.js'
 import { compareField } from './compare.js'
 import { PO_BOX, splitStreet, stateCode } from './clean.js'
 import { buildLglCalls, formatCall } from './lgl-calls.js'
@@ -12,7 +12,6 @@ import { buildLglCalls, formatCall } from './lgl-calls.js'
 const SHARED = new Set(['address', 'email', 'phones'])
 const COUPLE_OK_UNIT = new Set(['same', 'first-match', 'converged']) // names and deceased
 const COUPLE_BLOCKS_SHARED = new Set(['vg-changed', 'vg-cleared', 'both-changed', 'never-agreed'])
-const ENTRY_FIELDS = new Set(['address', 'email'])
 // Actions that copy LGL's value to VG: the unclean guard blocks these, and only these.
 const COPIES_TO_VG = new Set(['to-vg', 'merge', 'toward-deceased'])
 // A couple's shared field is written to LGL only when every partner's case is one of these.
@@ -44,7 +43,6 @@ export function countLglWrites(rows) {
   }
   return new Map([...runs].map(([k, s]) => [k, s.size]))
 }
-const phoneKey = (n) => comparable('phones', { phone: n })
 
 // The case for a field whose LGL value failed cleaning. That value is never equal to a clean
 // agreed value, so LGL has changed; what VG did decides the rest.

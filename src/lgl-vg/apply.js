@@ -17,10 +17,9 @@
 import { vgFields, comparable } from './fields.js'
 import { reconcileHolds } from './holds.js'
 import { applyLglWrites } from './apply-lgl.js'
+import { isRefusal, aborted } from './abort.js'
 import { unlinkedNotice, createUnfinished } from './unlinked.js'
 
-const isRefusal = (e) => [400, 404, 422].includes(e?.status)
-const aborted = (signal) => signal?.aborted === true
 
 // lgl: the LGL client (null sends nothing to LGL); runId: the sync_log rows' run; policy: gives the
 // lgl-addressee setting; lglAttempts bounds each LGL call's retries (a check passes 1).

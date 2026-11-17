@@ -10,14 +10,11 @@
 // The failed run's error carries what it gathered (e.partial: agree, holds, counts) for apply.js to
 // save. A stop (signal aborted) is checked between constituents: the one in hand finishes its calls
 // and its log append. Two writes to the same constituent and field fail the run before any is sent.
-import { lglFields, comparable, lglExpect } from './fields.js'
+import { lglFields, comparable, lglExpect, ENTRY_FIELDS } from './fields.js'
+import { isRefusal, aborted } from './abort.js'
 import { buildLglCalls } from './lgl-calls.js'
 import { fingerprint } from './plan.js'
 
-const isRefusal = (e) => [400, 404, 422].includes(e?.status)
-const aborted = (signal) => signal?.aborted === true
-// The fields whose memory row names the LGL entry written (as plan.js records them).
-const ENTRY_FIELDS = new Set(['address', 'email'])
 // The client returns a write's body only when LGL answered OK; LGL answers its writes with 200.
 const OK = 200
 const NOT_CURRENT = 'LGL stored the entry as not current'

@@ -3,11 +3,10 @@
 // replaced it. Pure: takes the pulled data and the holds read from VG, returns the writes and holds.
 // A wrong link or a duplicate person is the failure to avoid; anything uncertain is held.
 import { classifyDonors } from './donors.js'
-import { FIELDS, lglFields, vgFields, comparable } from './fields.js'
+import { FIELDS, lglFields, vgFields, comparable, ENTRY_FIELDS } from './fields.js'
 import { matchUnlinked, unlinkedFingerprint } from './match.js'
 import { fingerprint } from './plan.js'
 
-const ENTRY_FIELDS = new Set(['address', 'email'])
 const isOpenOrDismissed = (h) => h.state === 'open' || h.state === 'dismissed'
 const noPerson = (h) => h.personId == null
 
