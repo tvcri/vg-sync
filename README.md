@@ -3,8 +3,10 @@
 Scheduled, headless synchronization between Little Green Light, Village Green
 and Mailchimp for Village Common of Rhode Island.
 
-Not built yet. See `docs/context-2026-11-11.md` for the background and the
-open design questions, and `CLAUDE.md` for where the related projects live.
+The LGL ↔ VG sync is built; the VG → Mailchimp part is not. A reference to
+every command, option, variable and output line is in
+[`docs/vg-sync.1.md`](docs/vg-sync.1.md). `CLAUDE.md` says where the related
+projects live; `docs/context-2026-11-11.md` is the founding brief.
 
 ## Running the report
 
