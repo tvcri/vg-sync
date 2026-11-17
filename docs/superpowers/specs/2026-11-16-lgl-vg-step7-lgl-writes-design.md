@@ -232,9 +232,15 @@ today.
 calls, logs the call with outcome `refused`, and opens a hold, reason
 `lgl-refused`, with LGL's message. Any other failure fails the run, as for
 VG. **(call, final review)** That failed call is logged with outcome
-`failed`, since LGL may have applied it; and if an earlier call of the same
-field was answered (an add went through, then its retire failed), the field
-is left part way and an `lgl-incomplete` hold is opened. **(call)** The hold's fingerprint is the write attempted (field and
+`failed`, since LGL may have applied it. **(call, 2026-11-17)** A field is
+left for staff in one case only: an add or revive was answered and the
+retire that follows it was not (failed, refused, or never sent). Then the
+entry the sync read may still be current beside the new one, and an
+`lgl-incomplete` hold names both (`oldEntryId`, `newEntryId`). Any other
+stop part way leaves nothing half done (a phone write that stops at the
+cell's add, after the home number's add and retire, is finished by the next
+run), so it opens no `lgl-incomplete` hold; a refused add or revive opens
+`lgl-refused` wherever it falls. **(call)** The hold's fingerprint is the write attempted (field and
 VG's comparable value), not the three values the plan saw, because a
 partial write can change LGL's value. While an open or dismissed
 `lgl-refused` hold has the same fingerprint, the plan does not try that
@@ -248,7 +254,7 @@ write again; a new VG value is a new fingerprint and is tried.
 | `flapping` | by the plan while the count is over the limit | owned, as above: it closes when the thirty days have passed |
 | `lgl-refused` | by the apply step, on a refusal | owned, like `vg-refused`: closes when the plan no longer makes that write |
 | `addressee` | by the apply step, when it writes a name and leaves a hand-written addressee | **(call)** not owned: only staff close it, by dismissing it |
-| `lgl-incomplete` | **(call, final review)** by the apply step, when a field's calls stop part way on a failure; detail names the calls sent, the call that failed and the entry left current (`oldEntryId`); fingerprint the field and value written | not owned: staff retire the old entry in LGL by hand and dismiss it |
+| `lgl-incomplete` | **(call, final review; narrowed 2026-11-17)** by the apply step, when an add or revive was answered and its retire was not; detail names the calls answered, the call that failed, the entry left current (`oldEntryId`) and the new one (`newEntryId`, null when LGL's answer gave none); fingerprint the field and value written | not owned: staff retire the old entry in LGL by hand and dismiss it |
 
 **(call)** `addressee` is a to-do for staff ("this envelope still has the
 old name"), not a state the sync can watch: the name compares `same` on the
@@ -512,9 +518,9 @@ Controller rulings made while building, which change or sharpen the design.
   run with LGL writes off keeps the flapping holds and a run with nothing to
   write to LGL reads nothing.)
 - **A revive answered 404 is stale** (call, code review): the entry is gone,
-  so the next run adds the value; no hold. A refusal after an earlier call of
-  the field was answered opens `lgl-incomplete`, not `lgl-refused`. An add
-  answered without an entry id fails the run.
+  so the next run adds the value; no hold. A refused retire opens
+  `lgl-incomplete`, not `lgl-refused`. An add answered without an entry id
+  fails the run.
 - **A VG check that would send LGL writes during an LGL rate-limit pause**
   fails before writing. Checks by hand use 5 attempts; the service's checks 1.
 - **Go-live `--max-people`.** Its `n` comes from the write run's own breaker

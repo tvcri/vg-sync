@@ -58,8 +58,10 @@
    logged in `sync_log` with outcome `failed` before the run fails.
 2. A failed run saves what it gathered: memory upserted and the new holds
    opened (an `addressee` hold included), nothing closed or reopened.
-3. A field whose calls stop part way opens an `lgl-incomplete` hold (not
-   owned) naming the calls sent and the entry left current (`oldEntryId`).
+3. A field left with an old entry current beside the new one (an add or
+   revive answered, its retire not) opens an `lgl-incomplete` hold (not
+   owned) naming the calls answered, the old entry (`oldEntryId`) and the new
+   one (`newEntryId`). Narrowed 2026-11-17; see below.
 4. The stale check compares an unclean LGL value as stored (`lglExpect`, shared
    by plan and apply), so an unclean-to-unclean edit, or an edit of the clean
    phone slot beside an unclean one, is stale.
@@ -153,6 +155,13 @@ Fixed after a code review of the branch (2026-11-17):
   `lgl-incomplete`, so the old entry left current reaches staff.
 - An add answered without an entry id fails the run instead of logging a sent
   add as refused. A failed check read names the read in the hold, not the add.
+- The `lgl-incomplete` hold opens only when an add or revive was answered
+  and its retire was not, and names the old and the new entry. Before, a
+  phone write that stopped at the cell's add (after the home number was done)
+  named the old cell as "left current beside the new one" when no new cell
+  existed, so staff following it could retire the donor's only cell. Such a
+  stop now opens no hold; the next run sends the cell. Found in the step 7
+  build's last re-review.
 - The flapping log is read per person the guard looks up, in every mode: a
   run with LGL writes off no longer closes flapping holds, a check with
   nothing for LGL reads no log, and the 5000-row limit is per person.

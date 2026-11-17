@@ -3,12 +3,14 @@
 // saw, the calls built from the fresh record and sent in order, then one sync_log append of every
 // call sent. A field's calls stop at its first refusal (400, 404, 422, or an added or revived entry
 // LGL stored as not current), which opens an lgl-refused hold; the constituent's other fields go on.
-// A refusal after an earlier call of the field was answered opens an lgl-incomplete hold instead.
+// A field is left for staff (an lgl-incomplete hold) in one case only: an add or revive was answered
+// and the retire that follows it was not (it failed, was refused, or was never sent), so the entry
+// the sync read may still be current beside the new one. The hold names both. Any other stop leaves
+// nothing half done: the next run finds what was written and sends the rest.
 // A 404 on a retire is not a refusal: the entry is already gone, and the field is written. A 404 on
 // a revive is not one either: the entry is gone, so the field is stale and the next run adds it.
 // Any other failure fails the run, after logging the calls already sent and the one that failed
-// (outcome 'failed': LGL may have applied it). A field left part way (a call answered, a later one
-// not) opens an lgl-incomplete hold: the entry the sync read may still be current beside the new one.
+// (outcome 'failed': LGL may have applied it).
 // The failed run's error carries what it gathered (e.partial: agree, holds, counts) for apply.js to
 // save. A stop (signal aborted) is checked between constituents: the one in hand finishes its calls
 // and its log append. Two writes to the same constituent and field fail the run before any is sent.
@@ -99,24 +101,31 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           })
         }
       }
-      // A failure part way, after `done` calls were answered: the field's later calls are not sent,
-      // so the entry the next call would have retired may be left current. Staff finish it in LGL.
-      let done = 0
+      // The calls answered so far, and the retire still owed: set when an add or revive is answered
+      // and a retire of the entry the sync read follows it, cleared when that retire is done.
+      const answered = []
+      let pending = null
+      const owe = (i, newEntryId) => {
+        const next = calls[i + 1]
+        pending = next?.step === 'retire' ? { oldEntryId: String(next.oldEntryId), newEntryId: newEntryId ?? null } : null
+      }
+      // Opens the lgl-incomplete hold when a retire is owed; returns whether it did.
       const incomplete = (failed, e) => {
-        if (done === 0 || done >= calls.length) return
+        if (!pending) return false
         holdEach(w, 'lgl-incomplete', fingerprint(['lgl-incomplete', field, w.value]), {
-          sent: calls.slice(0, done).map(({ method, path, body }) => ({ method, path, body })),
+          sent: answered.map(({ method, path, body }) => ({ method, path, body })),
           failed: { method: failed.method, path: failed.path, body: failed.body, error: e?.message ?? String(e) },
-          oldEntryId: calls[done].oldEntryId == null ? null : String(calls[done].oldEntryId),
+          oldEntryId: pending.oldEntryId,
+          newEntryId: pending.newEntryId,
         })
+        return true
       }
 
-      // A refusal of the field's first call holds that exact write; one after an earlier call was
-      // answered leaves the field part way, which is staff's to finish (lgl-incomplete).
+      // A refused retire leaves the old entry beside the new one (lgl-incomplete); any other refusal
+      // holds that exact write (lgl-refused).
       const refuse = (call, lglEntryId, status, message) => {
         logCall(call, lglEntryId, 'refused', status, message)
-        if (done > 0) incomplete(call, { message })
-        else {
+        if (!incomplete(call, { message })) {
           holdEach(w, 'lgl-refused', fingerprint([field, comparable(field, w.value)]), {
             error: message, attempted: { method: call.method, path: call.path, body: call.body },
           })
@@ -133,13 +142,14 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           // A retire of an entry LGL no longer has (its daily dedup deletes entries) is done already.
           if (call.step === 'retire' && e?.status === 404) {
             logCall(call, entryIdOf(call, null), 'written', 404, 'already gone')
-            done++
+            answered.push(call)
+            pending = null
             continue
           }
           // A revive of an entry LGL no longer has: the field is stale, and the next run adds the value.
           if (call.step === 'revive' && e?.status === 404) {
             logCall(call, entryIdOf(call, null), 'refused', 404, 'entry gone')
-            if (done > 0) incomplete(call, e)
+            incomplete(call, e)
             return note(w, 'stale', { note: 'entry gone' })
           }
           if (!isRefusal(e)) {
@@ -157,7 +167,8 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
             current = await took(id, call, res, entryId)
           } catch (e) {
             logCall(call, entryId, 'written', OK, `not checked: ${e?.message ?? e}`) // it was sent
-            done++
+            answered.push(call)
+            owe(calls.indexOf(call), entryId)
             // What failed is the check, not the call: the hold says so, so staff do not add it again.
             const check = entryId == null ? { method: call.method, path: call.path, body: null } : { method: 'GET', path: `/constituents/${id}/${call.entryKind}`, body: null }
             incomplete(check, e)
@@ -165,9 +176,12 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           }
           if (!current) return refuse(call, entryId, OK, NOT_CURRENT)
         }
-        if (call.step === 'add' || call.step === 'revive') entryWritten = entryId
+        if (call.step === 'add' || call.step === 'revive') {
+          entryWritten = entryId
+          owe(calls.indexOf(call), entryId)
+        } else pending = null // a set, or the retire owed
         logCall(call, entryId, 'written', OK, null)
-        done++
+        answered.push(call)
       }
       note(w, 'written')
       // A merge records no memory: the next run reads both sides and finds first-match if they agree.

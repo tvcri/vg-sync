@@ -256,6 +256,7 @@ test('a field whose calls stop part way opens an lgl-incomplete hold naming the 
     sent: [{ method: 'POST', path: '/constituents/101/email_addresses', body: { address: 'new@example.org', email_type_name: 'Home', is_preferred: true } }],
     failed: { method: 'PATCH', path: '/email_addresses/11', body: { not_current: true }, error: e.message },
     oldEntryId: '11',
+    newEntryId: '905',
   })
   assert.deepEqual(e.partial.agree, [])
 })
@@ -530,4 +531,68 @@ test('a check read that fails after an add: the lgl-incomplete hold names the re
   assert.equal(e.partial.holds.length, 1)
   assert.deepEqual(e.partial.holds[0].detail.failed, { method: 'GET', path: '/constituents/101/email_addresses', body: null, error: 'LGL call → 503: invalid value' })
   assert.deepEqual(e.partial.holds[0].detail.sent.map((c) => c.method), ['POST'])
+})
+
+// Phones: a home and a cell, both changed in VG. Calls: add home, retire 21, add cell, retire 22.
+const phonesRecord = () => con({
+  email_addresses: [],
+  phone_numbers: [
+    { id: 21, number: '401-555-0101', normalized_number: '4015550101', phone_type_name: 'Home', is_preferred: true, not_current: false },
+    { id: 22, number: '401-555-0102', normalized_number: '4015550102', phone_type_name: 'Mobile', is_preferred: false, not_current: false },
+  ],
+})
+const phonesW = () => {
+  const read = lglFields(phonesRecord())
+  return {
+    kind: 'lgl', constituentId: '101', personIds: ['7'], field: 'phones', case: 'vg-changed',
+    value: { phone: '401-555-0201', cell: '401-555-0202' }, expect: lglExpect(read, 'phones'),
+    fingerprint: fingerprint(['phones', 'x']), merge: false, send: true,
+  }
+}
+const phonesLgl = (fail) => {
+  let n = 900
+  return fakeLgl({
+    records: { 101: phonesRecord() },
+    answer: (method, path, body) => {
+      const f = fail(method, path, body)
+      if (f) throw f
+      return method === 'POST' ? { id: ++n, not_current: false, ...body } : { ...body }
+    },
+  })
+}
+const isCellAdd = (method, path, body) => method === 'POST' && body.phone_type_name === 'Mobile'
+
+test('phones: the cell add fails after the home number is done: no lgl-incomplete hold (the next run sends the cell)', async () => {
+  const lgl = phonesLgl((m, p, b) => (isCellAdd(m, p, b) ? lglError(500) : null))
+  const e = await run([phonesW()], { lgl }).catch((x) => x)
+  assert.match(e.message, /500/)
+  assert.deepEqual(sent(lgl).map((c) => [c[0], c[1]]), [
+    ['POST', '/constituents/101/phone_numbers'], ['PATCH', '/phone_numbers/21'], ['POST', '/constituents/101/phone_numbers'],
+  ])
+  assert.deepEqual(e.partial.holds, [])
+})
+
+test('phones: the cell add refused after the home number is done: lgl-refused, not lgl-incomplete', async () => {
+  const lgl = phonesLgl((m, p, b) => (isCellAdd(m, p, b) ? lglError(422) : null))
+  const { r } = await run([phonesW()], { lgl })
+  assert.deepEqual(r.holds.map((h) => h.reason), ['lgl-refused'])
+  assert.deepEqual(r.counts, { written: 0, stale: 0, refused: 1 })
+})
+
+test('phones: the cell retire fails after the cell add: lgl-incomplete names the old cell and the new one', async () => {
+  const lgl = phonesLgl((m, p) => (m === 'PATCH' && p === '/phone_numbers/22' ? lglError(500) : null))
+  const e = await run([phonesW()], { lgl }).catch((x) => x)
+  assert.deepEqual(e.partial.holds.map((h) => h.reason), ['lgl-incomplete'])
+  const d = e.partial.holds[0].detail
+  assert.equal(d.oldEntryId, '22')
+  assert.equal(d.newEntryId, '902')
+  assert.deepEqual(d.failed.path, '/phone_numbers/22')
+  assert.deepEqual(d.sent.map((c) => c.method), ['POST', 'PATCH', 'POST'])
+})
+
+test('phones: the home retire refused after the home add: lgl-incomplete names the old home entry, and the cell is not sent', async () => {
+  const lgl = phonesLgl((m, p) => (m === 'PATCH' && p === '/phone_numbers/21' ? lglError(422) : null))
+  const { r } = await run([phonesW()], { lgl })
+  assert.deepEqual(r.holds.map((h) => [h.reason, h.detail.oldEntryId, h.detail.newEntryId]), [['lgl-incomplete', '21', '901']])
+  assert.deepEqual(sent(lgl).map((c) => c[0]), ['POST', 'PATCH'])
 })
