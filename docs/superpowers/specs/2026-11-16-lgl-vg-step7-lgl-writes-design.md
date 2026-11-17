@@ -189,7 +189,11 @@ A new module, `apply-lgl.js`. For each constituent with LGL writes, in turn:
 2. **Stale check.** For each planned field, LGL's comparable value must
    equal the plan's. If it moved, the field is skipped, outcome `stale`, and
    the next check decides again. This is what makes a decision from the
-   check's LGL cache (more than 20 touched) safe.
+   check's LGL cache (more than 20 touched) safe. **(call, final review)**
+   An unclean LGL value (comparable form empty) is compared as LGL stored it
+   (`lglExpect`, shared by the plan and the apply step), so an edit from one
+   unclean value to another, or of the clean phone slot beside an unclean
+   one, is stale too.
 3. **Build the calls** from the fresh record (next section).
 4. **Send them**, in order. Dry: print them, send nothing.
 5. **Log** the constituent's calls to `sync_log` in one append, right after
@@ -200,6 +204,19 @@ A new module, `apply-lgl.js`. For each constituent with LGL writes, in turn:
    is in the log only, and is accepted.
 6. **Memory.** For each field whose calls all succeeded, an agreed row with
    VG's value and the LGL entry id written or reused.
+
+**(call, final review)** A run that fails (a non-refusal failure, below)
+still keeps what it gathered: the failed constituent's calls are logged
+first, then `apply.js` upserts the memory gathered so far and opens the new
+holds (an `addressee` or `lgl-incomplete` hold is never found again by a
+later plan), closing and reopening nothing, as a stopped run does; then the
+run fails with the original error. If that log append also fails, the
+error's message says so and how many calls went unlogged, so the PASS FAILED
+or CHECK FAILED line carries it.
+
+**(call, final review)** Two writes to the same constituent and field in one
+run (a customer policy could produce them; both would add the same entry)
+fail the run before anything is sent.
 
 Then the existing `apply.js` order holds: VG writes, then LGL writes, then
 memory and holds for the run. A value is never written both ways in one
@@ -214,7 +231,10 @@ today.
 **Refusals.** A 400, 404 or 422 on a call stops that field's remaining
 calls, logs the call with outcome `refused`, and opens a hold, reason
 `lgl-refused`, with LGL's message. Any other failure fails the run, as for
-VG. **(call)** The hold's fingerprint is the write attempted (field and
+VG. **(call, final review)** That failed call is logged with outcome
+`failed`, since LGL may have applied it; and if an earlier call of the same
+field was answered (an add went through, then its retire failed), the field
+is left part way and an `lgl-incomplete` hold is opened. **(call)** The hold's fingerprint is the write attempted (field and
 VG's comparable value), not the three values the plan saw, because a
 partial write can change LGL's value. While an open or dismissed
 `lgl-refused` hold has the same fingerprint, the plan does not try that
@@ -228,6 +248,7 @@ write again; a new VG value is a new fingerprint and is tried.
 | `flapping` | by the plan while the count is over the limit | owned, as above: it closes when the thirty days have passed |
 | `lgl-refused` | by the apply step, on a refusal | owned, like `vg-refused`: closes when the plan no longer makes that write |
 | `addressee` | by the apply step, when it writes a name and leaves a hand-written addressee | **(call)** not owned: only staff close it, by dismissing it |
+| `lgl-incomplete` | **(call, final review)** by the apply step, when a field's calls stop part way on a failure; detail names the calls sent, the call that failed and the entry left current (`oldEntryId`); fingerprint the field and value written | not owned: staff retire the old entry in LGL by hand and dismiss it |
 
 **(call)** `addressee` is a to-do for staff ("this envelope still has the
 old name"), not a state the sync can watch: the name compares `same` on the
@@ -299,8 +320,10 @@ neither). A slot that already has two current entries and no mark is
 
 One `sync_log` row per call: run id, constituent id, person id, field,
 case, the request (method, path, body), the LGL entry id, LGL's old value
-(the field as read fresh), the new value, outcome (`written`, `refused`)
-and response status. Stale fields are counted, not logged: nothing was sent.
+(the field as read fresh), the new value, outcome (`written`, `refused`,
+or **(call, final review)** `failed`: a call that failed without a refusal,
+logged because LGL may have applied it; the flapping count reads `written`
+only) and response status. Stale fields are counted, not logged: nothing was sent.
 
 ### What comes back
 
