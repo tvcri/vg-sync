@@ -1,6 +1,6 @@
 # LGL ↔ VG sync, step 7: writes to LGL
 
-2026-11-16. Status: draft for the engineer's review. Board item
+2026-11-16. Status: built; rehearsed 2026-11-16 (see "What the rehearsal showed"). Board item
 VG-202611-521 (#153 in `tvcri/village-green`).
 
 The sync design (`2026-11-11-lgl-vg-sync-design.md`) is the parent. This
@@ -354,12 +354,15 @@ the no-retry POST, the log rows, the switches and the allow-list.
 runs the real service and reads LGL back (`expect.lgl`). Its runs gain
 `--write-lgl` with `LGL_WRITE_ALLOW=all` in `.env.harness`.
 
-- The scenarios that expect `deferred` today change to expect LGL's value
-  after the run: `vg-email-change-after-agreement-is-deferred`,
+- The scenarios that expected `deferred` change to expect LGL's value
+  after the run: `vg-email-change-after-agreement-reaches-lgl` (was
+  `vg-email-change-after-agreement-is-deferred`),
   `unclean-lgl-city-never-agreed-goes-to-lgl`,
-  `lgl-only-phone-fills-empty-vg-slot`, `vg-edit-is-deferred-by-vg-check`,
-  and `check-leaves-untouched-hold-open`'s deferred first name (both-changed,
-  VG wins).
+  `lgl-only-phone-fills-empty-vg-slot` and `vg-edit-reaches-lgl-by-vg-check`
+  (was `vg-edit-is-deferred-by-vg-check`). Two scenarios were renamed, as
+  shown. `check-leaves-untouched-hold-open` is not a flip: it gained
+  `lglWrites: 0, deferred: 0`, and its held first name is never-agreed, which
+  is never held (it is a both-changed pair, and the write goes to LGL).
 - New scenarios: VG wins a conflict (`both-changed`) with LGL's old value in
   the log; never-agreed address replaced, old entry not current; VG's
   address already on file as a not-current entry is revived, not added; PO
@@ -397,13 +400,96 @@ only real records have. The go-live is:
    afterwards, including the verification rewrite.
 4. **The backlog, by hand:** a dry `--once full` with the allow-list at
    `all` prints every call; once reviewed, `--once full --write-vg
-   --write-lgl --max-people <n>` with `n` from that dry run, as the
-   circuit breaker's own message already suggests. Then
+   --write-lgl --max-people <n>` with `n` from the write run's own breaker
+   message (see "Rulings during the build"). Then
    `LGL_WRITE_ALLOW=all` in the service's `.env`. **(call)** No special
    allowance in the code: the breaker stays the same for every unattended
    run, and the one big pass is attended.
 
 Each production LGL write stage needs the engineer's go-ahead.
+
+## What the rehearsal showed (2026-11-16)
+
+A production backup of 2026-11-16 was restored into the dev VG, the service
+account's grant restored, and `LGL_WRITE_ALLOW=all node src/lgl-vg/main.js
+--once full --out out/step7-dry` run with no `--write-*` against production
+LGL (reads only). Counts only; the decisions file holds the real data.
+
+1. **Unit tests** pass (717).
+2. **The harness:** 59 passed, 0 failed, 1 known, in about 25 minutes, with
+   the 16 new step 7 scenarios in `harness/scenarios/to-lgl.js`.
+3. **The dry full pass** exited 0: `PASS OK full dry-run people=31 writes=31
+   deferred=232 holdsPlanned=344 lgl-writes=0`. Production has never run the
+   sync, so it has no memory and every LGL write is never-agreed.
+4. **LGL writes planned** (all deferred, note `write-lgl off`): 232 fields on
+   194 constituents, in 322 calls. No deferred write lacked calls; there were
+   no `no calls` skips and no `vg state not a code`.
+   - phones: 136 fields, 138 add calls (VG-only numbers added, sent not
+     preferred; LGL keeps its preferred phone);
+   - email: 52 fields, 21 adds, 31 revives (VG's email already on file in
+     LGL) and 47 retires;
+   - address: 43 fields, 24 adds, 19 revives and 41 retires, every state sent
+     as a two-letter code;
+   - deceased: 1 set.
+5. **Against the 2026-11-11 report:** it found about 40 never-agreed
+   addresses and 5 PO boxes; the rehearsal planned 43 address writes and held
+   5 as `po-box`. They match.
+6. **Holds planned** (selected): po-box 5, phones-no-slot 25, couple 10,
+   unclean 5, ambiguous 1, never-agreed 99. `holdsOpen=0`, since production
+   VG has no seeded holds yet; `seed-import` loads them before go-live.
+7. **VG writes planned:** phones 27, last gift date 3, one link.
+8. **Consequence for go-live:** the backlog pass changes about 194 people
+   for LGL plus 31 for VG, far over the 50-person breaker. It is run by
+   hand, with `--max-people` from the write run's own breaker message
+   (see Go-live stage 4).
+
+## Rulings during the build
+
+Controller rulings made while building, which change or sharpen the design.
+
+- **POST retries.** A POST is retried on 429 only. A 5xx can follow an
+  applied POST, so it is not retried (a retry could add an entry LGL already
+  has); the next run finds the entry by value. A network error or timeout is
+  never retried, as before.
+- **`listEntries` refuses a truncated list.** It throws when `total_items`
+  exceeds the items read: the call builder must see every entry to find by
+  value without adding a duplicate. More than 100 entries of one kind is a
+  permanent read failure for that constituent (none expected).
+- **Unclean values are repaired.** `lglFields` records `entryIds` for the
+  picked entry even when its value is unclean, and each phone slot is compared
+  against that slot's read entry, so a repair retires exactly the entry the
+  sync read.
+- **Merge phones.** A VG-only number is written to LGL only into a type group
+  (mobile, non-mobile) with no current LGL entry; otherwise it is left, and
+  the `phones-no-slot` hold already lists the disagreement. The write never
+  creates an ambiguous slot.
+- **`vg-cleared`.** A non-merge phones write where VG emptied a slot LGL
+  still holds is held `vg-cleared` in the plan. Clearing is held both ways.
+- **State is a two-letter code.** VG's state goes through `stateCode` for the
+  write, and `comparable('address')` reduces state the same way, so VG
+  "Rhode Island" against LGL "RI" reads as the same instead of looping to
+  flapping. A state that does not convert throws only for a write that will
+  be sent; a deferred write keeps going, with its calls omitted and the note
+  `vg state not a code`, so a dry run or a writing-off run never fails on data
+  it will not send.
+- **`no calls`.** When an LGL write yields no calls on a non-merge path, the
+  decision is a `skip` with note `no calls`, not a change and not silent.
+- **A retire answered 404 is done.** The entry is already gone (for example
+  LGL's dedup); it is logged with status 404 and the field is still written.
+  A missing id is never a failure.
+- **A sent add is logged before its check.** An add or revive is logged
+  before the read-back check, so a sent POST is never unlogged. An add whose
+  check read failed is logged `written` with the note `not checked`.
+- **Flapping counts distinct runs.** One write logs one row per call, so the
+  count is distinct `runId` per person and field among `written` rows.
+- **5000 rows is a final failure.** Reaching 5000 written log rows in 30 days
+  fails the run without writing. Expected volume is a few hundred rows even at
+  go-live; 5000 means a loop, so halting and alerting is right.
+- **A VG check that would send LGL writes during an LGL rate-limit pause**
+  fails before writing. Checks by hand use 5 attempts; the service's checks 1.
+- **Go-live `--max-people`.** Its `n` comes from the write run's own breaker
+  message: the run trips safely, reports the true count and writes nothing.
+  One extra attended command (call).
 
 ## Left to the builder
 

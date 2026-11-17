@@ -976,12 +976,16 @@ writes to production.
    the LGL screen. The snapshot's donor links point at the real LGL records,
    so the calls are real. Differences that arose in LGL since the snapshot
    print too.
-4. **Production LGL, in stages.** Before the first write run: a dry run's
+4. **Production LGL, in stages (go-live, agreed 2026-11-16).** There are no
+   invented records in production. Before the first write run: a dry run's
    printed calls are reviewed, and a full LGL snapshot is saved (the sync log
    also records every value replaced). LGL writes are then limited by an
-   allow-list of constituent ids: first invented test records, then a few
-   real donors checked by hand in LGL afterwards, then everyone. The circuit
-   breaker caps every run.
+   allow-list of constituent ids: first a handful of real donors chosen to
+   cover the risky shapes and checked by hand in LGL afterwards, then
+   everyone. The circuit breaker caps every run; the backlog pass is run by
+   hand with `--max-people` taken from the write run's own breaker message.
+   The step 7 design's "Go-live" has the order. The invented records live in
+   the trial account, through the harness.
 
 **A trial LGL account for step 3 (2026-11-12).** LGL's Advanced
 Integration Options Guide (February 2024) offers a free test account through
@@ -1077,7 +1081,7 @@ VG, and, for LGL writes, against the trial account and then printed calls.
 After go-live, the scheduler runs the service unattended. The service goes to production once,
 after step 7, with everything in place: the nightly full pass, both change
 checks, and writes in both directions. The staged start in "Testing the
-write paths" (an allow-list of test records, then a few real donors, then
+write paths" (a dry run, then a few real donors, then
 everyone) happens within that one go-live, not as a series of releases. No
 interim version, such as a nightly pass that writes only to VG, ever runs
 unattended in production.
@@ -1123,9 +1127,19 @@ unattended in production.
    full pass and both checks against production LGL exited clean. The step
    6 design, "What the rehearsal showed", has the details.
 7. **VG to LGL.** Writes to LGL, using the calls verified on 2026-11-11.
-   Then the one go-live: the service is deployed to production and LGL
-   writes are switched on in the stages above. Before its first production
-   pass, `seed-import --write-vg` loads the import review's decisions into
+   **Built 2026-11-16:** `--write-lgl` and `WRITE_LGL` (which need
+   `--write-vg`), the allow-list `LGL_WRITE_ALLOW`, the call builder with
+   find-by-value, reuse, add and retire (never a delete), the stale check,
+   `sync_log` rows for every call sent, and the new holds `po-box`,
+   `flapping`, `lgl-refused` and `addressee`. The full harness set passes
+   (59, 16 of them step 7 scenarios) with LGL read back after each write. The
+   dry full pass against production LGL planned 232 field writes on 194
+   people (322 calls), matching the 2026-11-11 report's never-agreed
+   addresses and PO boxes; the backlog pass is attended and run by hand. The
+   step 7 design, "What the rehearsal showed", has the details. The one
+   go-live is next: the service is deployed to production and LGL writes are
+   switched on in the stages above. Before its first production pass,
+   `seed-import --write-vg` loads the import review's decisions into
    production VG (see "Staff decisions are not undone").
 
 Two checks were set down here; one remains:

@@ -187,7 +187,8 @@ Each stage that writes to production LGL needs the engineer's go-ahead.
    afterwards, including LGL's address verification rewrite.
 4. The backlog, by hand: a dry `--once full` with the allow-list at `all`
    prints every call; once reviewed, `--once full --write-vg --write-lgl
-   --max-people <n>` with `n` from that dry run. Then `LGL_WRITE_ALLOW=all`
+   --max-people <n>` with `n` taken from the write run's own breaker message: the run trips,
+   reports the true count and writes nothing, so rerun it with that `n`. Then `LGL_WRITE_ALLOW=all`
    in the service's `.env`. The breaker stays the same for every unattended
    run; the one big pass is attended.
 
