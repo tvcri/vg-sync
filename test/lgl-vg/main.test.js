@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { run, envFileFrom } from '../../src/lgl-vg/main.js'
+import { run, envFileFrom, stamped } from '../../src/lgl-vg/main.js'
 import { FIELDS, lglFields } from '../../src/lgl-vg/fields.js'
 
 const ENV = {
@@ -611,4 +611,16 @@ test('--snapshot and --max-people are refused by the checks', async () => {
       assert.match(h.out.join('\n'), /^Unknown option /)
     }
   }
+})
+
+test('stamped puts the time (ISO, UTC) before each line, so a line still contains its marker', () => {
+  const out = []
+  const write = stamped((t) => out.push(t), () => Date.parse('2026-11-17T19:00:59.252Z'))
+  write('SYNC ALIVE last-full=none')
+  write('one\ntwo')
+  assert.deepEqual(out, [
+    '2026-11-17T19:00:59.252Z SYNC ALIVE last-full=none',
+    '2026-11-17T19:00:59.252Z one\n2026-11-17T19:00:59.252Z two',
+  ])
+  assert.ok(out[0].includes('SYNC ALIVE'))
 })

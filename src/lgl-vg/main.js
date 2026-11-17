@@ -364,6 +364,11 @@ async function service({
   return finished
 }
 
+// The service's console: each line starts with the time it was written (ISO, UTC). A message of several
+// lines gets the time on each. The alerts match text inside a line, so they still match.
+export const stamped = (write, now) => (t) =>
+  write(String(t).split('\n').map((line) => `${new Date(now()).toISOString()} ${line}`).join('\n'))
+
 export async function run(argv, deps) {
   const { env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read } = deps
   if (argv.length === 0) return service(deps)
@@ -433,7 +438,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     fetchImpl: fetch,
     now: Date.now,
     onSignal: (name, fn) => process.on(name, fn),
-    stdout: (t) => console.log(t),
+    // The service's lines carry their time; a command run by hand prints as it always has.
+    stdout: envArgs.rest.length === 0 ? stamped((t) => console.log(t), Date.now) : (t) => console.log(t),
     // { append: true } adds to the file (a check's decisions go to one file a day)
     writeFile: async (p, text, { append = false } = {}) => {
       await mkdir(dirname(p), { recursive: true })

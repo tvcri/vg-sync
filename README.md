@@ -32,7 +32,12 @@ people. Do not commit or share them. `out/` is gitignored.
 ## Running the service
 
 `npm start` (`node src/lgl-vg/main.js` with no command) runs the service. It
-signs in to VG, reaches LGL, and prints three start-up lines:
+signs in to VG, reaches LGL, and prints three start-up lines. Every line the
+service prints starts with the time it was written (ISO, UTC), shown below
+without it; commands run with `--once`, `setup` or `seed-import` print
+without a time.
+
+Its three start-up lines:
 
 ```
 STARTUP VG signed in as <username>
