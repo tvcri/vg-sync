@@ -3,7 +3,9 @@
 // saw, the calls built from the fresh record and sent in order, then one sync_log append of every
 // call sent. A field's calls stop at its first refusal (400, 404, 422, or an added or revived entry
 // LGL stored as not current), which opens an lgl-refused hold; the constituent's other fields go on.
-// A 404 on a retire is not a refusal: the entry is already gone, and the field is written.
+// A refusal after an earlier call of the field was answered opens an lgl-incomplete hold instead.
+// A 404 on a retire is not a refusal: the entry is already gone, and the field is written. A 404 on
+// a revive is not one either: the entry is gone, so the field is stale and the next run adds it.
 // Any other failure fails the run, after logging the calls already sent and the one that failed
 // (outcome 'failed': LGL may have applied it). A field left part way (a call answered, a later one
 // not) opens an lgl-incomplete hold: the entry the sync read may still be current beside the new one.
@@ -47,7 +49,8 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
   // An added or revived entry must be current; the response says so, or the list is read for it.
   const took = async (id, call, res, entryId) => {
     if (res?.not_current !== undefined) return !res.not_current
-    if (entryId == null) return false
+    // LGL answers an add with the new entry; without its id the add cannot be checked or retired after
+    if (entryId == null) throw new Error(`LGL answered ${call.method} ${call.path} without an entry id`)
     const entry = (await lgl.listEntries(id, call.entryKind, opts)).find((e) => String(e.id) === entryId)
     return Boolean(entry) && !entry.not_current
   }
@@ -96,14 +99,6 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           })
         }
       }
-      const refuse = (call, lglEntryId, status, message) => {
-        logCall(call, lglEntryId, 'refused', status, message)
-        holdEach(w, 'lgl-refused', fingerprint([field, comparable(field, w.value)]), {
-          error: message, attempted: { method: call.method, path: call.path, body: call.body },
-        })
-        note(w, 'refused', { note: message })
-      }
-
       // A failure part way, after `done` calls were answered: the field's later calls are not sent,
       // so the entry the next call would have retired may be left current. Staff finish it in LGL.
       let done = 0
@@ -114,6 +109,19 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           failed: { method: failed.method, path: failed.path, body: failed.body, error: e?.message ?? String(e) },
           oldEntryId: calls[done].oldEntryId == null ? null : String(calls[done].oldEntryId),
         })
+      }
+
+      // A refusal of the field's first call holds that exact write; one after an earlier call was
+      // answered leaves the field part way, which is staff's to finish (lgl-incomplete).
+      const refuse = (call, lglEntryId, status, message) => {
+        logCall(call, lglEntryId, 'refused', status, message)
+        if (done > 0) incomplete(call, { message })
+        else {
+          holdEach(w, 'lgl-refused', fingerprint([field, comparable(field, w.value)]), {
+            error: message, attempted: { method: call.method, path: call.path, body: call.body },
+          })
+        }
+        note(w, 'refused', { note: message })
       }
 
       let entryWritten = null
@@ -127,6 +135,12 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
             logCall(call, entryIdOf(call, null), 'written', 404, 'already gone')
             done++
             continue
+          }
+          // A revive of an entry LGL no longer has: the field is stale, and the next run adds the value.
+          if (call.step === 'revive' && e?.status === 404) {
+            logCall(call, entryIdOf(call, null), 'refused', 404, 'entry gone')
+            if (done > 0) incomplete(call, e)
+            return note(w, 'stale', { note: 'entry gone' })
           }
           if (!isRefusal(e)) {
             logCall(call, entryIdOf(call, null), 'failed', e?.status ?? null, e?.message ?? String(e))
@@ -142,9 +156,11 @@ export async function applyLglWrites(writes, { lgl, vg, runId = null, policy = n
           try {
             current = await took(id, call, res, entryId)
           } catch (e) {
-            logCall(call, entryId, 'written', OK, 'not checked: the entry list could not be read') // it was sent
+            logCall(call, entryId, 'written', OK, `not checked: ${e?.message ?? e}`) // it was sent
             done++
-            incomplete(call, e)
+            // What failed is the check, not the call: the hold says so, so staff do not add it again.
+            const check = entryId == null ? { method: call.method, path: call.path, body: null } : { method: 'GET', path: `/constituents/${id}/${call.entryKind}`, body: null }
+            incomplete(check, e)
             throw e
           }
           if (!current) return refuse(call, entryId, OK, NOT_CURRENT)

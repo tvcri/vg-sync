@@ -474,3 +474,60 @@ test('a 404 on a retire means the entry is already gone: the field is written', 
     ['POST', 'written', 200, null], ['PATCH', 'written', 404, 'already gone'],
   ])
 })
+
+test('a 404 on a revive means the entry is gone: the field is stale, with no hold', async () => {
+  const record = con({ email_addresses: [
+    { id: 11, address: 'old@example.org', is_preferred: true, not_current: false },
+    { id: 13, address: 'new@example.org', is_preferred: false, not_current: true },
+  ] })
+  const lgl = fakeLgl({
+    records: { 101: record },
+    answer: (method, path, body) => { if (path === '/email_addresses/13') throw lglError(404); return { ...body } },
+  })
+  const { r, vg } = await run([emailW()], { lgl })
+  assert.deepEqual(sent(lgl).map((c) => c[1]), ['/email_addresses/13']) // the old entry is not retired
+  assert.deepEqual(r.counts, { written: 0, stale: 1, refused: 0 })
+  assert.deepEqual(r.holds, [])
+  assert.deepEqual(r.agree, [])
+  assert.deepEqual(vg.appends[0].map((x) => [x.request.method, x.outcome, x.responseStatus, x.lglEntryId, x.note]), [
+    ['PATCH', 'refused', 404, '13', 'entry gone'],
+  ])
+})
+
+test('a retire refused after the add went through opens lgl-incomplete, not lgl-refused', async () => {
+  const lgl = fakeLgl({
+    answer: (method, path, body) => {
+      if (path === '/email_addresses/11') throw lglError(422)
+      return method === 'POST' ? { id: 905, not_current: false } : { ...body }
+    },
+  })
+  const { r, vg } = await run([emailW()], { lgl })
+  assert.deepEqual(r.counts, { written: 0, stale: 0, refused: 1 })
+  assert.deepEqual(r.holds.map((h) => [h.field, h.reason, h.fingerprint]), [
+    ['email', 'lgl-incomplete', fingerprint(['lgl-incomplete', 'email', 'new@example.org'])],
+  ])
+  assert.deepEqual(r.holds[0].detail.failed, { method: 'PATCH', path: '/email_addresses/11', body: { not_current: true }, error: 'LGL call → 422: invalid value' })
+  assert.equal(r.holds[0].detail.oldEntryId, '11')
+  assert.deepEqual(r.agree, [])
+  assert.deepEqual(vg.appends[0].map((x) => [x.request.method, x.outcome]), [['POST', 'written'], ['PATCH', 'refused']])
+})
+
+test('an add answered without an entry id fails the run and opens lgl-incomplete; it is not a refusal', async () => {
+  const lgl = fakeLgl({ answer: (method, path, body) => (method === 'POST' ? {} : { ...body }) })
+  const vg = fakeVg()
+  const e = await run([emailW()], { lgl, vg }).catch((x) => x)
+  assert.match(e.message, /without an entry id/)
+  assert.deepEqual(sent(lgl).map((c) => c[0]), ['POST'])
+  assert.deepEqual(vg.appends[0].map((x) => [x.request.method, x.outcome]), [['POST', 'written']])
+  assert.deepEqual(e.partial.holds.map((h) => h.reason), ['lgl-incomplete'])
+  assert.equal(e.partial.counts.refused, 0)
+})
+
+test('a check read that fails after an add: the lgl-incomplete hold names the read, not the add', async () => {
+  const lgl = fakeLgl({ answer: (method, path, body) => (method === 'POST' ? { id: 905 } : { ...body }) })
+  lgl.listEntries = async () => { throw lglError(503) }
+  const e = await run([emailW()], { lgl }).catch((x) => x)
+  assert.equal(e.partial.holds.length, 1)
+  assert.deepEqual(e.partial.holds[0].detail.failed, { method: 'GET', path: '/constituents/101/email_addresses', body: null, error: 'LGL call → 503: invalid value' })
+  assert.deepEqual(e.partial.holds[0].detail.sent.map((c) => c.method), ['POST'])
+})
