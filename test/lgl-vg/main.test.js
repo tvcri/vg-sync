@@ -624,3 +624,35 @@ test('stamped puts the time (ISO, UTC) before each line, so a line still contain
   ])
   assert.ok(out[0].includes('SYNC ALIVE'))
 })
+
+// LGL_MOCK: a state file stands in for LGL (lgl-mock.js); nothing reaches LGL.
+const policyJson = readFileSync(new URL('../../policy.json', import.meta.url), 'utf8')
+const mockFiles = () => ({ 'policy.json': policyJson, 'out/mock.json': JSON.stringify({ pulledAt: 'x', constituents, gifts }) })
+const mockEnv = (o = {}) => { const { LGL_API_KEY, ...rest } = ENV; return { ...rest, LGL_MOCK: 'out/mock.json', ...o } }
+
+test('LGL_MOCK: a full pass reads the state file, says so first and on its PASS line, and makes no LGL request', async () => {
+  const h = harness({ lgl: false, files: mockFiles() })
+  h.deps.env = mockEnv()
+  assert.equal(await run(['--once', 'full'], h.deps), 0)
+  assert.match(h.out[0], /^LGL MOCK out\/mock\.json/)
+  assert.match(h.out.find((l) => l.startsWith('PASS ')), /^PASS OK full dry-run .* lgl=mock$/)
+  assert.ok(!h.calls.some((c) => c.includes('littlegreenlight')))
+})
+
+test('LGL_MOCK: report and the checks use the state file too', async () => {
+  const h = harness({ lgl: false, files: mockFiles() })
+  h.deps.env = mockEnv()
+  assert.equal(await run(['report'], h.deps), 0)
+  assert.match(h.out[0], /^LGL MOCK/)
+  const c = harness({ lgl: false, files: mockFiles() })
+  c.deps.env = mockEnv()
+  assert.equal(await run(['--once', 'lgl-check', '--since', '2026-11-11T00:00:00Z'], c.deps), 0)
+  assert.ok(!c.calls.some((x) => x.includes('littlegreenlight')))
+})
+
+test('LGL_MOCK with no state file refuses to run', async () => {
+  const h = harness({ lgl: false, files: { 'policy.json': policyJson } })
+  h.deps.env = mockEnv()
+  assert.equal(await run(['--once', 'full'], h.deps), 1)
+  assert.match(h.out.join('\n'), /PASS FAILED full LGL_MOCK state file out\/mock\.json could not be read/)
+})

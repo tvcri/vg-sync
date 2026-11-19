@@ -209,6 +209,36 @@ Each stage that writes to production LGL needs the engineer's go-ahead.
    in the service's `.env`. The breaker stays the same for every unattended
    run; the one big pass is attended.
 
+## Rehearsing with a mock LGL
+
+A rehearsal on production data (VG restored from a production dump) can
+carry out its LGL writes and read them back on the next pass, without
+touching LGL: set `LGL_MOCK` to a state file. Reads answer from the file;
+`patchConstituent`, entry adds and entry patches change it (new entry ids,
+one preferred entry per kind, an emptied addressee and salutation rebuilt
+from the name) and stamp the constituent's `updated_at`, so the LGL check
+and the next pass see the sync's own writes. The file is written back after
+every write, so separate runs and the service see each other's writes.
+`LGL_API_KEY` is not needed. Mock runs accept `--write-vg --write-lgl`.
+
+It is a fetch stand-in behind the real LGL client (`src/lgl-vg/lgl-mock.js`),
+so the request, paging and retry code is the code a real run uses. It does
+not model LGL itself: no address verification, dedup, validation, refusals
+or rate limits.
+
+```sh
+# Start (or reset) the state from a saved production pull. It holds real data: keep it in out/.
+node src/lgl-vg/main.js report --save-snapshot          # writes out/lgl-snapshot-<time>.json
+cp out/lgl-snapshot-<time>.json out/mock-lgl.json
+
+LGL_MOCK=out/mock-lgl.json LGL_WRITE_ALLOW=all \
+  node src/lgl-vg/main.js --once full --write-vg --write-lgl
+```
+
+A staff-style edit in LGL is an edit of the file: change the field and set
+the constituent's `updated_at` to now (ISO, UTC), and the next LGL check
+picks it up.
+
 ## Loading the import's decisions (once, before go-live)
 
 `node src/lgl-vg/main.js seed-import --file <import-prod-*.json>` reads the

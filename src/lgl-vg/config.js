@@ -78,7 +78,8 @@ export function allowedForLgl(config, constituentId) {
 }
 
 export function loadConfig(env = process.env) {
-  const missing = REQUIRED.filter((k) => !present(env[k]))
+  // With LGL_MOCK (a state file standing in for LGL, lgl-mock.js) no API key is needed.
+  const missing = REQUIRED.filter((k) => !present(env[k]) && !(k === 'LGL_API_KEY' && present(env.LGL_MOCK)))
   if (missing.length) throw new Error(`Missing environment variables: ${missing.join(', ')}`)
 
   const horizon = present(env.CREATE_HORIZON_YEARS) ? String(env.CREATE_HORIZON_YEARS).trim() : '5'
@@ -90,7 +91,8 @@ export function loadConfig(env = process.env) {
 
   return {
     lgl: {
-      apiKey: String(env.LGL_API_KEY).trim(),
+      apiKey: String(env.LGL_API_KEY ?? '').trim(),
+      mock: present(env.LGL_MOCK) ? String(env.LGL_MOCK).trim() : null,
       membershipFundId: toId('LGL_MEMBERSHIP_FUND_ID', env.LGL_MEMBERSHIP_FUND_ID),
       paypalPaymentTypeId: toId('LGL_PAYPAL_PAYMENT_TYPE_ID', env.LGL_PAYPAL_PAYMENT_TYPE_ID),
     },

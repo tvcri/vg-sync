@@ -9,7 +9,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadConfig } from './config.js'
-import { createLglClient } from './lgl.js'
+import { openLgl } from './lgl-mock.js'
 import { createVgClient } from './vg.js'
 import { buildReport } from './report.js'
 import { parsePolicy } from './policy.js'
@@ -99,6 +99,16 @@ function parseFullOptions(args) {
   return opts
 }
 
+// The LGL client for a command: the real API, or with LGL_MOCK the state file (lgl-mock.js). A mock
+// run says so on its first line, and its PASS and CHECK lines end with lgl=mock.
+async function lglFor(config, deps, stdout) {
+  const { lgl, mock } = await openLgl(config, { fetchImpl: deps.fetchImpl ?? fetch, sleep: deps.sleep, readFile: deps.readFile, writeFile: deps.writeFile, now: deps.now })
+  if (!mock) return { lgl, stdout }
+  stdout(`LGL MOCK ${mock}: no request reaches LGL; LGL writes change this file`)
+  const marked = (t) => stdout(String(t).split('\n').map((l) => (/^(PASS|CHECK) /.test(l) ? `${l} lgl=mock` : l)).join('\n'))
+  return { lgl, stdout: marked }
+}
+
 async function full(argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFile: write, readFile: read }) {
   let opts
   try {
@@ -112,10 +122,10 @@ async function full(argv, { env, fetchImpl = fetch, sleep, now, stdout, writeFil
     const policy = parsePolicy(await read(config.policyFile))
     const snapshot = opts.snapshot ? await readSnapshot(read, opts.snapshot) : null
     const vg = createVgClient({ ...config.vg, fetchImpl, now })
-    const lgl = snapshot ? null : createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
+    const { lgl, stdout: say } = snapshot ? { lgl: null, stdout } : await lglFor(config, { fetchImpl, sleep, readFile: read, writeFile: write, now }, stdout)
     return await runFullPass({
       config, policy, vg, lgl, snapshot, writeVg: opts.writeVg, writeLgl: opts.writeLgl, maxPeople: opts.maxPeople,
-      now, writeLines: write, stdout, out: opts.out,
+      now, writeLines: write, stdout: say, out: opts.out,
     })
   } catch (err) {
     stdout(`PASS FAILED full ${err.message}`)
@@ -162,7 +172,8 @@ async function check(kind, argv, { env, fetchImpl = fetch, sleep, now, stdout, w
     const config = loadConfig(env)
     const policy = parsePolicy(await read(config.policyFile))
     const vg = createVgClient({ ...config.vg, fetchImpl, now })
-    const lgl = createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
+    let lgl
+    ;({ lgl, stdout } = await lglFor(config, { fetchImpl, sleep, readFile: read, writeFile: write, now }, stdout))
     const field = kind === 'vg-check' ? 'vgCursor' : 'lglCursor'
     let cursor = opts.cursor
     if (cursor === null) {
@@ -345,7 +356,7 @@ async function service({
     config = loadConfig(env)
     policy = parsePolicy(await read(config.policyFile))
     vg = createVgClient({ ...config.vg, fetchImpl, now })
-    lgl = createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
+    ;({ lgl, stdout } = await lglFor(config, { fetchImpl, sleep, readFile: read, writeFile: write, now }, stdout))
   } catch (err) {
     stdout(`STARTUP FAILED ${err.message}`)
     return 1
@@ -397,7 +408,7 @@ export async function run(argv, deps) {
     if (opts.snapshot) {
       ;({ constituents, gifts } = await readSnapshot(read, opts.snapshot))
     } else {
-      const lgl = createLglClient({ apiKey: config.lgl.apiKey, fetchImpl, sleep })
+      const { lgl } = await lglFor(config, { fetchImpl, sleep, readFile: read, writeFile: write, now }, stdout)
       constituents = await lgl.pullConstituents()
       gifts = await lgl.pullGifts()
       if (opts.saveSnapshot) {

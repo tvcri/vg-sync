@@ -122,7 +122,7 @@ user row and records its privacy acknowledgement.
 
 ## ENVIRONMENT
 
-Required: `LGL_API_KEY`, `LGL_MEMBERSHIP_FUND_ID`,
+Required: `LGL_API_KEY` (unless `LGL_MOCK` is set), `LGL_MEMBERSHIP_FUND_ID`,
 `LGL_PAYPAL_PAYMENT_TYPE_ID`, `VG_API_URL`, `VG_OIDC_URL`, `VG_CLIENT_ID`,
 `VG_CLIENT_SECRET`.
 
@@ -139,6 +139,7 @@ Required: `LGL_API_KEY`, `LGL_MEMBERSHIP_FUND_ID`,
 | `PASS_TIMEOUT_MINUTES` | 30 (max 1440) | A longer full pass is stopped and fails. |
 | `CHECK_TIMEOUT_MINUTES` | 5 (max 60) | A longer check is stopped and fails. |
 | `POLICY_FILE` | `policy.json` | The rules file. |
+| `LGL_MOCK` | none | A state file that stands in for LGL, for rehearsals: reads answer from it, LGL writes change it. No request reaches LGL. See README, "Rehearsing with a mock LGL". |
 | `OUT_DIR` | `out` | Decisions files. |
 | `DECISIONS_KEEP_DAYS` | 30 | Older decisions files are deleted after each pass. |
 | `IMAGE_REVISION` | none | The commit, recorded on each run row (set by the image). |
@@ -212,6 +213,9 @@ cursors), `sync_log` (one row per LGL call sent).
 - **Flapping**: a field written to LGL by more than 3 runs in 30 days is held.
 - **Refusals**: a write VG or LGL refuses opens a hold and is not retried
   until the value changes.
+- **Mock LGL**: with `LGL_MOCK` set, every command's first line is `LGL
+  MOCK <file>`, its PASS and CHECK lines end with `lgl=mock`, and no request
+  reaches LGL. A missing state file stops the run.
 
 ## EXAMPLES
 

@@ -10,7 +10,7 @@ const full = {
 
 test('loadConfig reads values, converts ids to numbers, strips trailing slashes, applies defaults', () => {
   const c = loadConfig(full)
-  assert.deepEqual(c.lgl, { apiKey: 'k', membershipFundId: 11, paypalPaymentTypeId: 22 })
+  assert.deepEqual(c.lgl, { apiKey: 'k', mock: null, membershipFundId: 11, paypalPaymentTypeId: 22 })
   assert.equal(c.vg.apiUrl, 'https://vg.example.org/api')
   assert.equal(c.vg.oidcUrl, 'https://auth.example.org/realms/vg')
   assert.equal(c.vg.scope, 'vg')
@@ -107,4 +107,11 @@ test('LGL_WRITE_ALLOW: unset is none, all is all, a list is ids', () => {
 
 test('LGL_WRITE_ALLOW refuses anything but ids or all', () => {
   assert.throws(() => loadConfig({ ...base, LGL_WRITE_ALLOW: '101,abc' }), /LGL_WRITE_ALLOW/)
+})
+
+test('LGL_MOCK names a state file and makes LGL_API_KEY optional', () => {
+  const { LGL_API_KEY, ...rest } = full
+  assert.throws(() => loadConfig(rest), /LGL_API_KEY/)
+  const c = loadConfig({ ...rest, LGL_MOCK: ' out/mock.json ' })
+  assert.deepEqual([c.lgl.mock, c.lgl.apiKey], ['out/mock.json', ''])
 })
