@@ -563,8 +563,9 @@ the customer"):
   so a name only one system has fills the other, and only names that really
   differ are listed for staff. The 2026-11-19 rehearsal found 62 of 63
   nickname holds were one side blank. This goes past question 3's answer
-  ("names listed, not changed") for a name only one system has; whether
-  the customer is told is the engineer's call. Email stays held, as above.
+  ("names listed, not changed") for a name only one system has, so the
+  engineer asked: the customer agreed on 2026-11-19. Email stays held, as
+  above.
   `policy.json` is unchanged, so a name cleared after go-live is held.
 - For deceased, question 4: the mark goes either way with its date, and is
   never removed by the service (see the guard below).

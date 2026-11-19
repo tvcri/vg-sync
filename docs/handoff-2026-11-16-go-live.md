@@ -165,8 +165,8 @@ on `never-agreed` only; an unclean LGL value is held `unclean`, not filled),
   names stay. The backlog pass therefore sends about 56 more LGL name
   writes than the step 7 counts above.
 - The customer's answer to question 3 (2026-11-12) was "names listed, not
-  changed". Filling a blank name goes past it; the design's policy section
-  says so.
+  changed". Filling a blank name goes past it, so the engineer asked; the
+  customer agreed on 2026-11-19 (the design's policy section).
 
 Also: the README's "Setting up the service account" says to grant the Staff
 role. Since VG's #155 the account's role is Sync Service (role 8, federation
