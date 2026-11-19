@@ -50,7 +50,7 @@ Fields:
 | `firstName`, `lastName`, `suffix`, `nickname` | Names |
 | `address` | VG's one address; LGL's preferred current street address |
 | `email` | VG's email; LGL's preferred current email |
-| `phones` | VG's home and cell together; LGL's current phone entries |
+| `phones` | VG's home and cell together; every current LGL phone, as a set. A copy to VG is held (`phones-no-slot`) when LGL has more than two. |
 | `deceased` | The deceased mark, with its date |
 
 ### records
@@ -94,7 +94,7 @@ which side changed.
 | `to-vg` | any | Copy LGL's value to VG. An empty LGL value is copied too, emptying VG's field: use it on `never-agreed` only with care. |
 | `to-lgl` | any | Copy VG's value to LGL. An empty VG value is held, never written. |
 | `to-lgl-else-hold` | any | As `to-lgl`, but an empty VG value is held as `never-agreed`. Used for email. |
-| `merge` | `phones` only | Fill each side's empty slots from the other: a number only LGL has goes to VG, one only VG has goes to LGL. A number with no free slot is held (`phones-no-slot`). Records no agreed value; the next run finds them agreeing. |
+| `merge` | `phones` only | Fill each side from the other: a number only LGL has goes to an empty VG slot, one only VG has is added to LGL (LGL's phones are a list; any number of one type is fine). An LGL number with no free VG slot is held (`phones-no-slot`). Records no agreed value; the next run finds them agreeing. |
 | `toward-deceased` | `deceased` only | Whichever side has the mark gives it to the other, with its date. Two marks with different dates are held. |
 | `fill-blank` | any; `never-agreed` only | Fill only an empty side: LGL's value goes to VG where VG has none, VG's to LGL where LGL has none. Two different values are held as `never-agreed`, as `hold` would. An unclean LGL value is not empty: it is held `unclean`. |
 
@@ -109,8 +109,8 @@ Some guards run whatever the file says. Each opens a hold with its own
 reason:
 
 - A malformed LGL value is never copied to VG (`unclean`); several
-  candidate LGL entries for one field are never guessed between
-  (`ambiguous`).
+  candidate LGL addresses or emails for one field are never guessed
+  between (`ambiguous`). Phones are a list and are never ambiguous.
 - An emptied value is never written to LGL, and a deceased mark is never
   removed by the sync (`deceased-removed`).
 - A first name from LGL that would drop VG's nickname is held

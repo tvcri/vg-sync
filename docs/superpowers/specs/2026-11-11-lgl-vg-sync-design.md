@@ -614,8 +614,9 @@ before the policy lookup, and each produces a hold:
   stored, and its fingerprint is built from that raw value, so a change from
   one malformed value to another reopens a dismissed hold (the engineer's
   rulings on findings (b) and (c), 2026-11-14).
-- **Ambiguous entry.** LGL has more than one current entry of a kind and
-  none is marked preferred (see "LGL's lists").
+- **Ambiguous entry.** LGL has more than one current address or email and
+  none is marked preferred (see "LGL's lists"). Phones are a list and are
+  never ambiguous.
 - **Couple.** See "Couples".
 - **Flapping.** A field that has been copied back and forth more than three
   times in thirty days. **(call)** This guard waits for step 6. It needs a
@@ -639,8 +640,8 @@ before the policy lookup, and each produces a hold:
 | nickname | `nickname` | `nick_name` | |
 | address | `street`, `unit`, `city`, `state`, `zip` | the preferred entry of `street_addresses` | One field. An address moves whole or not at all. |
 | email | `email` | the preferred entry of `email_addresses` | |
-| phone | `phone` | the preferred non-mobile entry of `phone_numbers` | |
-| cell | `cell` | the preferred mobile entry of `phone_numbers` | |
+| phone | `phone` | every current entry of `phone_numbers`, compared as a set with VG's two (see "LGL's phones") | |
+| cell | `cell` | | |
 | deceased | `deceased`, `deceasedDate` | `is_deceased`, `deceased_date` | Compared as a pair: flag and date. |
 
 Last gift date is not in this table or the policy file. It is computed from
@@ -680,8 +681,9 @@ that was.
 
 - If staff make a different entry preferred, LGL's value has changed, and
   the field is compared like any other change.
-- If LGL has more than one current entry of a kind and none is preferred,
-  the "ambiguous entry" guard holds the field.
+- If LGL has more than one current address or email and none is
+  preferred, the "ambiguous entry" guard holds the field. Phones are not
+  read this way (below).
 - **(call)** A copy of an address to LGL adds VG's address as a new entry,
   makes it preferred, and marks the old preferred entry not current. LGL
   keeps the old address on file, and a person can restore it in the LGL
@@ -690,10 +692,45 @@ that was.
   already on file as an entry, current or not, that entry is made current
   and preferred instead of adding a copy: LGL does not refuse duplicates,
   and its daily cleanup would delete one of the two.
-- **(call)** Emails and phones are written the same way as addresses: VG's
-  value is added as the preferred entry and the old one is marked not
-  current. Question 3 told the customer "nothing in LGL is deleted";
-  updating an entry in place would overwrite the old value.
+- **(call)** Emails are written the same way as addresses: VG's value is
+  added as the preferred entry and the old one is marked not current.
+  Question 3 told the customer "nothing in LGL is deleted"; updating an
+  entry in place would overwrite the old value. Phones follow below.
+
+### LGL's phones
+
+Changed 2026-11-19 (the engineer: several numbers of one type in LGL are
+normal, and type should not matter to a write when it does not to the
+comparison). Before, LGL's phones were read as two slots, one entry per type
+group, and a merge refused to add into a type group that already had a
+current entry; on the 2026-11-19 rehearsal 18 of 25 `phones-no-slot` holds
+were people whose LGL record had one number.
+
+- **Read.** LGL's value is every current number, one number on two entries
+  counted once, compared as a set with VG's Phone and Cell. Several of one
+  type are not `ambiguous`. Any current number that fails cleaning makes the
+  field `unclean`.
+- **Laid out as VG's slots** (`fields.js`, `lglPhones`): numbers are taken
+  preferred first, then newest first (highest entry id). Phone takes the
+  first non-mobile, Cell the first mobile, then an empty slot the next of
+  either type; the rest are `extra`.
+- **LGL to VG** (`to-vg`, a create): copied only when LGL's numbers fit in
+  two slots. A number VG already has stays in its slot; the others fill the
+  slots left, LGL's Phone preferring Phone and Cell Cell. More than two is
+  held `phones-no-slot`. A person created with more than two gets the first
+  two and no phones memory row, so the next pass holds the rest.
+- **Merge** (`never-agreed`): LGL numbers VG lacks fill VG's empty slots in
+  that order; one with no free slot is held `phones-no-slot`, which now
+  means only that. A VG number LGL lacks is added to LGL, typed from its VG
+  slot (Phone to Home, Cell to Mobile), whatever that type already holds.
+  Nothing is retired or retyped, and the preferred mark is not moved.
+- **VG to LGL** (`to-lgl`): VG's new numbers are added and each LGL number
+  VG no longer has is retired right after the one that replaces it (one of
+  the same type first, then preferred, then newest). The new number takes
+  the mark only from the entry it replaces, or when no kept entry has it.
+  With fewer VG numbers than LGL has, a number would be retired with nothing
+  in its place: held `vg-cleared` if VG has an empty slot, `phones-no-slot`
+  if not.
 
 Where LGL's preferred address differs from VG's on the day a pair is first
 seen, the field is `never-agreed` for `address`. The first report on real

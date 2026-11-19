@@ -109,7 +109,7 @@ test('an address with no current entry in LGL is added and nothing is retired', 
   assert.equal(r.calls[0].body.is_preferred, true)
 })
 
-test('only the entry read as LGL\'s value is retired', () => {
+test('a new number retires one dropped LGL number: of its type, preferred first, then newest', () => {
   const c = con({
     phone_numbers: [
       ph(30, '401-555-0130', 'Work'),
@@ -183,15 +183,29 @@ test('merge adds VG-only numbers and retires nothing', () => {
   ])
 })
 
-test('merge leaves a VG-only number out when LGL has a current entry of that type', () => {
+test('merge adds a VG-only number whatever its type group holds, and leaves the mark where it is', () => {
   // LGL's only current Home number is unmarked (the mark is on the Mobile); VG's phone is a different number
   const c = con({ phone_numbers: [ph(31, '401-555-0131', 'Home'), ph(33, '401-555-0133', 'Mobile', { is_preferred: true })] })
   const r = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0140', cell: '401-555-0133' } }), c, ifDefault)
-  assert.deepEqual(r.calls, [])
-  // a not-current entry of the type does not count: the number is added
-  const d = con({ phone_numbers: [ph(31, '401-555-0131', 'Home', { not_current: true }), ph(33, '401-555-0133', 'Mobile', { is_preferred: true })] })
-  const s = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0140', cell: '401-555-0133' } }), d, ifDefault)
-  assert.deepEqual(s.calls.map((x) => [x.step, x.body.number, x.body.is_preferred]), [['add', '401-555-0140', false]])
+  assert.deepEqual(r.calls.map((x) => [x.step, x.body.number, x.body.phone_type_name, x.body.is_preferred]), [['add', '401-555-0140', 'Home', false]])
+})
+
+test('merge: VG Phone A and Cell B, LGL one number B typed Home: A is added as Home', () => {
+  const c = con({ phone_numbers: [ph(31, '401-555-0131', 'Home', { is_preferred: true })] })
+  const r = buildLglCalls(w({ field: 'phones', case: 'merge', merge: true, value: { phone: '401-555-0140', cell: '401-555-0131' } }), c, ifDefault)
+  assert.deepEqual(r.calls, [
+    { method: 'POST', path: '/constituents/101/phone_numbers', body: { number: '401-555-0140', phone_type_name: 'Home', is_preferred: false }, step: 'add', entryKind: 'phone_numbers', oldEntryId: null },
+  ])
+})
+
+test('a write retires the LGL numbers VG dropped, whatever their type, each after the number that replaces it', () => {
+  // two Home numbers (the mark on the older); VG kept one and replaced the other with a cell
+  const c = con({ phone_numbers: [ph(31, '401-555-0131', 'Home', { is_preferred: true }), ph(32, '401-555-0132', 'Home')] })
+  const r = buildLglCalls(w({ field: 'phones', value: { phone: '401-555-0132', cell: '401-555-0150' } }), c, ifDefault)
+  assert.deepEqual(r.calls, [
+    { method: 'POST', path: '/constituents/101/phone_numbers', body: { number: '401-555-0150', phone_type_name: 'Mobile', is_preferred: true }, step: 'add', entryKind: 'phone_numbers', oldEntryId: 31 },
+    { method: 'PATCH', path: '/phone_numbers/31', body: { not_current: true }, step: 'retire', entryKind: 'phone_numbers', oldEntryId: 31 },
+  ])
 })
 
 test('an email equal in other capitals is revived, not added', () => {

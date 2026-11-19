@@ -85,7 +85,37 @@ test('mobile goes to cell, other types to phone', () => {
     { id: 5, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true },
     { id: 6, number: '401-555-0103', phone_type_name: 'Work', is_preferred: true },
   ] })
-  assert.equal(amb.problems.phones, 'ambiguous')
+  // several marked across groups, one unclean: read as a list, and unclean (never ambiguous)
+  assert.equal(amb.problems.phones, 'unclean')
+})
+
+test('LGL phones are a list: two current Home numbers with the mark on a Mobile are not ambiguous', () => {
+  const r = lglFields({ ...base, phone_numbers: [
+    { id: 1, number: '401-555-0101', phone_type_name: 'Home' },
+    { id: 3, number: '401-555-0103', phone_type_name: 'Home' },
+    { id: 2, number: '401-555-0102', phone_type_name: 'Mobile', is_preferred: true },
+  ] })
+  assert.equal(r.problems.phones, undefined)
+  // preferred first, then the newest: the newer Home fills Phone, the Mobile Cell; the rest is extra
+  assert.deepEqual(r.values.phones, { phone: '401-555-0103', cell: '401-555-0102', extra: ['401-555-0101'] })
+  assert.equal(comparable('phones', r.values.phones), '4015550101,4015550102,4015550103')
+})
+
+test('two current Home numbers and no mark: the newer fills Phone, the other the empty Cell slot', () => {
+  const r = lglFields({ ...base, phone_numbers: [
+    { id: 1, number: '401-555-0101', phone_type_name: 'Home' },
+    { id: 3, number: '401-555-0103', phone_type_name: 'Home' },
+  ] })
+  assert.equal(r.problems.phones, undefined)
+  assert.deepEqual(r.values.phones, { phone: '401-555-0103', cell: '401-555-0101' })
+})
+
+test('the same number on two current entries is one number', () => {
+  const r = lglFields({ ...base, phone_numbers: [
+    { id: 1, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true },
+    { id: 2, number: '(401) 555-0101', phone_type_name: 'Mobile' },
+  ] })
+  assert.deepEqual(r.values.phones, { phone: '401-555-0101', cell: null })
 })
 
 test('vgFields maps the API person and turns empty strings into null', () => {

@@ -572,13 +572,52 @@ test('merge plans the VG write and an LGL write of VG-only numbers, and records 
   assert.deepEqual(ds[1].calls, ['LGL POST /constituents/101/phone_numbers {"number":"401-555-0102","phone_type_name":"Mobile","is_preferred":false}'])
 })
 
-test('merge: a VG-only number LGL has no free type group for is not planned; held phones-no-slot', () => {
-  // VG's home number differs from LGL's: LGL's goes to VG's empty cell slot, VG's has no slot in LGL
+test('merge: a VG-only number goes to LGL even where its type group is taken; LGL\'s goes to VG\'s empty slot', () => {
   const c = con({ phone_numbers: [{ id: 13, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true }] })
   const p = plan({ constituents: [c], persons: [per({ phone: { phone: '401-555-0103', cell: null } })], ...on })
   assert.deepEqual(p.writes[0].fields.phones.body, { phone: '401-555-0103', cell: '401-555-0101' })
-  assert.deepEqual(p.lglWrites, [])
+  assert.deepEqual(p.lglWrites.map((w) => [w.field, w.merge, w.value]), [['phones', true, { phone: '401-555-0103', cell: null }]])
+  assert.deepEqual(p.holds, [])
+})
+
+test('merge: VG Phone A and Cell B, LGL only B typed Home: A is added to LGL, no hold; then the pair agrees', () => {
+  const c = con({ phone_numbers: [{ id: 13, number: '401-555-0102', phone_type_name: 'Home', is_preferred: true }] })
+  const vg = per({ phone: { phone: '401-555-0101', cell: '401-555-0102' } })
+  const p = plan({ constituents: [c], persons: [vg], ...on })
+  assert.deepEqual(p.holds, [])
+  assert.deepEqual(p.writes, [])
+  assert.deepEqual(decisionsFor(p, 'phones')[0].calls, ['LGL POST /constituents/101/phone_numbers {"number":"401-555-0101","phone_type_name":"Home","is_preferred":false}'])
+  // after the add LGL has two Home numbers: read as a list, they match VG's two slots
+  const after = con({ phone_numbers: [...c.phone_numbers, { id: 14, number: '401-555-0101', phone_type_name: 'Home' }] })
+  const q = plan({ constituents: [after], persons: [vg], ...on })
+  assert.deepEqual([q.holds, q.lglWrites, q.writes], [[], [], []])
+  assert.equal(decisionsFor(q, 'phones')[0].case, 'first-match')
+})
+
+test('merge: an LGL number with no VG slot is the only phones-no-slot', () => {
+  const c = con({ phone_numbers: [
+    { id: 13, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true },
+    { id: 14, number: '401-555-0105', phone_type_name: 'Work' },
+  ] })
+  const p = plan({ constituents: [c], persons: [per({ phone: { phone: '401-555-0101', cell: '401-555-0102' } })], ...on })
   assert.deepEqual(p.holds.map((h) => [h.field, h.reason]), [['phones', 'phones-no-slot']])
+  assert.deepEqual(p.lglWrites.map((w) => w.value), [{ phone: '401-555-0101', cell: '401-555-0102' }])
+})
+
+test('lgl-changed phones: copied to VG when LGL\'s numbers fit, VG\'s kept numbers staying in their slots', () => {
+  const was = con({ phone_numbers: [{ id: 13, number: '401-555-0102', phone_type_name: 'Home', is_preferred: true }] })
+  const vg = per({ phone: { phone: null, cell: '401-555-0102' } })
+  const memory = [...agreedAt(was).filter((r) => r.field !== 'phones'), mem('phones', { phone: null, cell: '401-555-0102' })]
+  // LGL adds a second Home number: it fills VG's empty Phone slot, and VG's cell stays the cell
+  const now = con({ phone_numbers: [...was.phone_numbers, { id: 14, number: '401-555-0104', phone_type_name: 'Home' }] })
+  const p = plan({ constituents: [now], persons: [vg], memory })
+  assert.equal(decisionsFor(p, 'phones')[0].case, 'lgl-changed')
+  assert.deepEqual(p.writes[0].fields.phones.body, { phone: '401-555-0104', cell: '401-555-0102' })
+  // a third number does not fit: held phones-no-slot, nothing written
+  const three = con({ phone_numbers: [...now.phone_numbers, { id: 15, number: '401-555-0105', phone_type_name: 'Mobile' }] })
+  const q = plan({ constituents: [three], persons: [vg], memory })
+  assert.deepEqual(q.writes, [])
+  assert.deepEqual(q.holds.map((h) => [h.field, h.reason]), [['phones', 'phones-no-slot']])
 })
 
 test('a field written to LGL more than 3 times in 30 days is held flapping', () => {
@@ -738,4 +777,16 @@ test('fill-blank, both filled and different: held never-agreed exactly as hold w
 test('fill-blank keeps the guards: a couple\'s first names are still held couple', () => {
   const p = planReconcile({ constituents: [coupleCon()], persons: couplePersons() })
   assert.deepEqual(p.holds.filter((x) => x.field === 'firstName').map((x) => [x.personId, x.reason]), [['7', 'couple'], ['8', 'couple']])
+})
+
+test('vg-changed phones with fewer numbers than LGL\'s list: held phones-no-slot when VG\'s slots are full', () => {
+  const c = con({ phone_numbers: [
+    { id: 13, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true },
+    { id: 14, number: '401-555-0102', phone_type_name: 'Mobile' },
+    { id: 15, number: '401-555-0103', phone_type_name: 'Work' },
+  ] })
+  const p = plan({ constituents: [c], persons: [per({ phone: { phone: '401-555-0101', cell: '401-555-0109' } })], memory: agreedAt(c), ...on })
+  assert.equal(decisionsFor(p, 'phones')[0].case, 'vg-changed')
+  assert.deepEqual(p.holds.map((h) => [h.field, h.reason]), [['phones', 'phones-no-slot']])
+  assert.deepEqual(p.lglWrites, [])
 })

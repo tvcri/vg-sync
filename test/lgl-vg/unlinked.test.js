@@ -282,3 +282,14 @@ test('of two resolved holds on one donor, the latest resolution is carried out a
   const p = run({ persons: [per(8, { firstName: 'Ann', lastName: 'Roe', email: 'ann@example.org' })], holds: [older, newer] })
   assert.deepEqual([p.links.map((w) => w.hold.holdId), p.creates, ids(p.close)], [['41'], [], ['40']])
 })
+
+test('a person created from LGL with more numbers than VG has slots gets two, and no phones memory row', () => {
+  const c = con(201, { phone_numbers: [
+    { id: 1, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true },
+    { id: 2, number: '401-555-0102', phone_type_name: 'Mobile' },
+    { id: 3, number: '401-555-0103', phone_type_name: 'Work' },
+  ] })
+  const { body, agree } = createBody(c)
+  assert.deepEqual([body.phone, body.cell], ['401-555-0101', '401-555-0102'])
+  assert.ok(!agree.some((r) => r.field === 'phones'))
+})

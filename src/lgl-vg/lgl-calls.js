@@ -55,35 +55,43 @@ function entryCalls ({ id, kind, entries, oldId, matches, body, preferred, retir
   return calls
 }
 
-function phoneCalls (id, write, constituent, read) {
+// LGL's phones are a list of current numbers, of any types. A VG number LGL lacks is added (or a
+// matching old entry revived), typed from its VG slot (Phone -> Home, Cell -> Mobile), whatever that
+// type already holds. A merge retires nothing; a write retires each current number VG no longer
+// has, right after the number that replaces it (one of the same type first). The plan holds a write
+// that would retire more than it adds. LGL has one preferred phone: a new number takes the mark
+// only from the entry it replaces, or when no current entry kept keeps it.
+function phoneCalls (id, write, constituent) {
   const entries = constituent.phone_numbers ?? []
-  // Each slot is compared with the entry the sync read for it, clean or not (values.phones is
-  // null when either slot is unclean).
-  const readEntry = { phone: null, cell: null }
-  for (const slot of ['phone', 'cell']) readEntry[slot] = entries.find((e) => e.id === read.entryIds[slot]) ?? null
-  const readKey = (slot) => (readEntry[slot] ? phoneKey(phoneOf(readEntry[slot])) : '')
-  const lglNumbers = new Set(['phone', 'cell'].map(readKey).filter(Boolean))
-  // LGL has one preferred phone per constituent; a write never moves the mark to the other type group.
-  let markHeld = entries.some((e) => !e.not_current && e.is_preferred)
-  const calls = []
+  const current = entries.filter((e) => !e.not_current)
+  const keyOf = (e) => phoneKey(phoneOf(e))
+  const lglKeys = new Set(current.map(keyOf).filter(Boolean))
+  const vgKeys = new Set(['phone', 'cell'].map((s) => phoneKey(write.value?.[s])).filter(Boolean))
+  // in the read's order (preferred first, then newest), so a number replaces the one shown in its slot
+  const olds = write.merge ? [] : current.filter((e) => !vgKeys.has(keyOf(e)))
+    .sort((a, b) => Number(Boolean(b.is_preferred)) - Number(Boolean(a.is_preferred)) || Number(b.id) - Number(a.id))
+  // Each new number, with the old entry it replaces (none in a merge, or once the olds run out).
+  const adds = []
   for (const slot of ['phone', 'cell']) {
     const key = phoneKey(write.value?.[slot])
-    if (!key) continue // VG has no number here: clearing a slot is never a write
+    if (!key || lglKeys.has(key)) continue // VG has no number here (a clear is never written), or LGL has it
+    lglKeys.add(key)
     const mobile = slot === 'cell'
-    if (write.merge ? lglNumbers.has(key) : key === readKey(slot)) continue
-    // A merge adds only into a type group with no current entry: a second current entry with no
-    // mark would make the slot ambiguous. The plan's phones-no-slot hold lists the number left out.
-    if (write.merge && entries.some((e) => !e.not_current && isMobile(e) === mobile)) continue
-    const old = write.merge ? null : readEntry[slot]
-    const oldId = old?.id ?? null
+    const i = olds.findIndex((e) => isMobile(e) === mobile)
+    adds.push({ slot, key, mobile, old: olds.length ? olds.splice(i >= 0 ? i : 0, 1)[0] : null })
+  }
+  const retired = new Set(adds.map((a) => a.old).filter(Boolean))
+  let markHeld = current.some((e) => e.is_preferred && !retired.has(e))
+  const calls = []
+  for (const { slot, key, mobile, old } of adds) {
     const preferred = Boolean(old?.is_preferred) || !markHeld
     if (preferred) markHeld = true
     calls.push(...entryCalls({
-      id, kind: 'phone_numbers', entries, oldId,
-      matches: (e) => isMobile(e) === mobile && phoneKey(phoneOf(e)) === key,
+      id, kind: 'phone_numbers', entries, oldId: old?.id ?? null,
+      matches: (e) => isMobile(e) === mobile && keyOf(e) === key,
       body: { number: write.value[slot], phone_type_name: mobile ? 'Mobile' : 'Home' },
       preferred,
-      retire: !write.merge,
+      retire: old != null,
     }))
   }
   return calls
@@ -95,7 +103,7 @@ export function buildLglCalls (write, constituent, { addresseeSetting }) {
   const { field, value } = write
   if (NAME_KEYS[field] || field === 'deceased') return setCall(id, write, constituent, addresseeSetting)
   const read = lglFields(constituent)
-  if (field === 'phones') return { calls: phoneCalls(id, write, constituent, read), addressee: null }
+  if (field === 'phones') return { calls: phoneCalls(id, write, constituent), addressee: null }
   const spec = ENTRY[field]
   if (!spec) throw new Error(`LGL write for constituent ${id}: unknown field "${field}"`)
   const target = comparable(field, value)

@@ -53,7 +53,10 @@ export function createBody (c) {
     for (const k of ['street', 'unit', 'city', 'state', 'zip']) put(k, values.address[k])
   }
   if (!problems.phones && values.phones) { put('phone', values.phones.phone); put('cell', values.phones.cell) }
-  const agree = FIELDS.filter((f) => !problems[f]).map((f) => ({
+  // VG takes two numbers: with more in LGL the pair does not agree, so no phones memory (the next
+  // pass holds the number with no slot)
+  const agrees = (f) => !problems[f] && !(f === 'phones' && values.phones?.extra)
+  const agree = FIELDS.filter(agrees).map((f) => ({
     field: f, lglConstituentId: String(c.id), value: values[f] ?? null,
     lglEntryId: ENTRY_FIELDS.has(f) && entryIds[f] != null ? String(entryIds[f]) : null,
   }))

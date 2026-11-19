@@ -4,7 +4,7 @@
 // LGL), memory rows and holds.
 import { createHash } from 'node:crypto'
 import { classifyDonors } from './donors.js'
-import { FIELDS, lglFields, vgFields, comparable, lglExpect, vgPatch, mergePhones, keepsNickname, phoneKey, ENTRY_FIELDS } from './fields.js'
+import { FIELDS, lglFields, vgFields, comparable, lglExpect, vgPatch, mergePhones, fitPhones, keepsNickname, phoneKey, phoneNumbers, ENTRY_FIELDS } from './fields.js'
 import { compareField } from './compare.js'
 import { PO_BOX, splitStreet, stateCode } from './clean.js'
 import { buildLglCalls, formatCall } from './lgl-calls.js'
@@ -72,11 +72,15 @@ function lglValueOf(field, vgValue) {
   return state ? { ...vgValue, state } : null
 }
 
-// True when VG has emptied a phone slot LGL's read slot (clean or not) still holds. Clearing is
-// never written, so such a write would make no call for that slot and recur every run.
-function clearsPhoneSlot(lgl, vg) {
+// Why VG's phones cannot go to LGL as they are, or null. A write makes LGL's numbers VG's, each
+// dropped LGL number retired for a new one; with fewer VG numbers than LGL has (clean or not), one
+// would be retired with nothing in its place. That is a clear when VG has an empty slot (never
+// written), and an LGL number with no VG slot when it has none.
+function phonesShortfall (lgl, vg) {
+  const keys = (v) => new Set(phoneNumbers(v).map(phoneKey).filter(Boolean))
   const read = lgl.problems.phones === 'unclean' ? lgl.raw.phones : lgl.values.phones
-  return ['phone', 'cell'].some((slot) => !phoneKey(vg[slot]) && phoneKey(read?.[slot]))
+  if (keys(vg).size >= keys(read).size) return null
+  return vg.phone && vg.cell ? 'phones-no-slot' : 'vg-cleared'
 }
 
 // lglSend(constituentId): true when an LGL write to that constituent will be sent (writing on and
@@ -280,7 +284,7 @@ export function planLinked({
         const toLgl = () => {
           if (r.vgC === '') policyHold(action === 'to-lgl-else-hold' ? 'never-agreed' : kase)
           else if (f === 'deceased' && !r.vg.flag) policyHold('deceased-removed')
-          else if (f === 'phones' && clearsPhoneSlot(lgl, r.vg)) policyHold('vg-cleared')
+          else if (f === 'phones' && phonesShortfall(lgl, r.vg)) policyHold(phonesShortfall(lgl, r.vg))
           else if (coupleToLgl) coupleRows.push({ dec, r })
           else lglWrite(c, lgl, [{ dec, r }], { value: lglValueOf(f, r.vg) })
         }
@@ -295,7 +299,12 @@ export function planLinked({
           if (isCouple && SHARED.has(f) && policy.setting('couple-lgl-changed') !== 'to-vg') policyHold('couple')
           else if (f === 'firstName' && !keepsNickname(lglValue, r.vg)) policyHold('lost-nickname')
           else if (f === 'deceased' && !lglValue.flag && r.vg.flag) policyHold('deceased-removed')
-          else toVg(lglValue, agreeRow)
+          else if (f === 'phones') {
+            // VG has two slots: LGL's numbers are copied only when they fit
+            const fit = fitPhones(lglValue, r.vg)
+            if (fit) toVg(fit, agreeRow)
+            else policyHold('phones-no-slot')
+          } else toVg(lglValue, agreeRow)
         } else if (action === 'toward-deceased') {
           if (lglValue.flag) policyHold(kase)
           else toLgl()

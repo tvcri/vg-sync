@@ -45,36 +45,66 @@ export function lglFields (c) {
   // LGL's value as stored, for a field that failed cleaning: shown in the hold and fingerprinted,
   // so a change from one malformed value to another is seen.
   const raw = {}
-  const slots = { phone: null, cell: null }
-  const rawSlots = { phone: null, cell: null }
-  const slotProblems = []
-
   const lists = [
     ['address', c.street_addresses, lglAddress, (a) => ({ street: a.street ?? null, city: a.city ?? null, state: a.state ?? null, zip: a.zip5 || a.postal_code || null })],
     ['email', c.email_addresses, (e) => { const v = String(e.address ?? '').trim(); return EMAIL.test(v) ? v : null }, (e) => e.address ?? null],
-    ['phone', (c.phone_numbers ?? []).filter((p) => !isMobile(p)), formatPhone, (p) => p.number ?? null],
-    ['cell', (c.phone_numbers ?? []).filter(isMobile), formatPhone, (p) => p.number ?? null],
   ]
   for (const [field, list, convert, rawOf] of lists) {
     const { entry, ambiguous } = pick(list)
-    const slot = field === 'phone' || field === 'cell'
-    const fail = (kind) => { if (slot) slotProblems.push(kind); else problems[field] = kind }
-    if (ambiguous) { fail('ambiguous'); continue }
+    if (ambiguous) { problems[field] = 'ambiguous'; continue }
     if (!entry) continue
     // The entry the sync read, clean or not: a write that repairs it retires this entry.
     entryIds[field] = entry.id
     const v = convert(entry)
-    if (slot) rawSlots[field] = rawOf(entry)
-    if (v == null) { fail('unclean'); if (!slot) raw[field] = rawOf(entry); continue }
-    if (slot) slots[field] = v
-    else values[field] = v
+    if (v == null) { problems[field] = 'unclean'; raw[field] = rawOf(entry); continue }
+    values[field] = v
   }
-  if (slotProblems.length) {
-    problems.phones = slotProblems.includes('ambiguous') ? 'ambiguous' : 'unclean'
-    if (problems.phones === 'unclean') raw.phones = rawSlots
-  } else values.phones = slots
+
+  // Phones are a list: every current number, compared as a set. Any number of one type is normal.
+  const phones = lglPhones(c.phone_numbers)
+  entryIds.phone = phones.ids.phone
+  entryIds.cell = phones.ids.cell
+  if (phones.unclean) { problems.phones = 'unclean'; raw.phones = phones.raw } else values.phones = phones.value
   return { values, entryIds, problems, raw }
 }
+
+// LGL's current phone numbers laid out as VG's two slots plus the rest. Numbers are taken
+// preferred first, then newest first (the highest entry id); one number on two entries counts
+// once. Phone takes the first non-mobile, Cell the first mobile, then an empty slot takes the next
+// number of either type; any number left is in `extra` (a key present only when there is one).
+// `value` holds the clean forms; `raw` the numbers as stored, laid out alike; `unclean` is true
+// when any current number fails cleaning.
+function lglPhones (list) {
+  const current = (list ?? []).filter((x) => !x.not_current)
+    .sort((a, b) => Number(Boolean(b.is_preferred)) - Number(Boolean(a.is_preferred)) || Number(b.id) - Number(a.id))
+  const seen = new Set()
+  const numbers = []
+  for (const e of current) {
+    const clean = formatPhone(e)
+    const key = phoneDigits(clean ?? e.number)
+    if (key && seen.has(key)) continue
+    if (key) seen.add(key)
+    numbers.push({ e, clean, raw: e.number ?? null })
+  }
+  const slots = { phone: null, cell: null }
+  const rest = []
+  for (const n of numbers) {
+    const slot = isMobile(n.e) ? 'cell' : 'phone'
+    if (!slots[slot]) slots[slot] = n
+    else rest.push(n)
+  }
+  for (const slot of ['phone', 'cell']) if (!slots[slot] && rest.length) slots[slot] = rest.shift()
+  const lay = (of) => ({ phone: slots.phone ? of(slots.phone) : null, cell: slots.cell ? of(slots.cell) : null, ...(rest.length ? { extra: rest.map(of) } : {}) })
+  return {
+    value: lay((n) => n.clean),
+    raw: lay((n) => n.raw),
+    unclean: numbers.some((n) => n.clean == null),
+    ids: { phone: slots.phone?.e.id ?? null, cell: slots.cell?.e.id ?? null },
+  }
+}
+
+// Every number in a phones value: the two slots, then any extra.
+export const phoneNumbers = (v) => [v?.phone, v?.cell, ...(v?.extra ?? [])]
 
 export function vgFields (p) {
   const d = p.detail ?? {}
@@ -161,7 +191,7 @@ export function comparable (field, value) {
   switch (field) {
     case 'firstName': return norm(String(value).replace(/\([^)]*\)/g, ' '))
     case 'email': return String(value).trim().toLowerCase()
-    case 'phones': return [...new Set([value.phone, value.cell].map(phoneDigits).filter(Boolean))].sort().join(',')
+    case 'phones': return [...new Set(phoneNumbers(value).map(phoneDigits).filter(Boolean))].sort().join(',')
     case 'deceased': return value.flag ? `1|${value.date ?? ''}` : '0'
     case 'address': {
       const streetUnit = addressText(`${value.street ?? ''} ${value.unit ?? ''}`, { suffixes: true, houseNumber: true })
@@ -182,15 +212,17 @@ export function vgPatch (field, value) {
   }
 }
 
-// Keeps VG's phone slots and fills empty ones with LGL numbers VG lacks.
+// Keeps VG's phone slots and fills empty ones with LGL numbers VG lacks, in LGL's order (its Phone,
+// its Cell, then the rest). `unplaced` are LGL numbers with no free slot; `vgOnly` VG's numbers LGL
+// lacks.
 export function mergePhones (lgl, vg) {
   const value = { phone: vg.phone ?? null, cell: vg.cell ?? null }
   const have = new Set([vg.phone, vg.cell].map(phoneDigits).filter(Boolean))
-  const lglHas = new Set([lgl.phone, lgl.cell].map(phoneDigits).filter(Boolean))
+  const lglHas = new Set(phoneNumbers(lgl).map(phoneDigits).filter(Boolean))
   let placed = 0
   const unplaced = []
-  for (const label of ['phone', 'cell']) {
-    const number = lgl[label]
+  const labelled = [['phone', lgl.phone], ['cell', lgl.cell], ...(lgl.extra ?? []).map((n) => ['phone', n])]
+  for (const [label, number] of labelled) {
     const d = phoneDigits(number)
     if (!d || have.has(d)) continue
     const other = label === 'phone' ? 'cell' : 'phone'
@@ -199,6 +231,26 @@ export function mergePhones (lgl, vg) {
   }
   const vgOnly = [vg.phone, vg.cell].filter((n) => phoneDigits(n) && !lglHas.has(phoneDigits(n)))
   return { value, placed, unplaced, vgOnly }
+}
+
+// LGL's numbers as VG's two slots, for a copy to VG: a number VG already has stays in its slot, and
+// LGL's others fill the slots left, its Phone preferring Phone and its Cell Cell. Null when LGL has
+// more numbers than VG has slots (the copy is held).
+export function fitPhones (lgl, vg) {
+  const numbers = []
+  for (const n of phoneNumbers(lgl)) if (phoneDigits(n) && !numbers.some((m) => phoneDigits(m) === phoneDigits(n))) numbers.push(n)
+  if (numbers.length > 2) return null
+  const keys = new Set(numbers.map(phoneDigits))
+  const value = { phone: null, cell: null }
+  for (const slot of ['phone', 'cell']) if (keys.has(phoneDigits(vg?.[slot]))) value[slot] = numbers.find((n) => phoneDigits(n) === phoneDigits(vg[slot]))
+  const placed = new Set(Object.values(value).map(phoneDigits).filter(Boolean))
+  for (const [label, n] of [['phone', lgl.phone], ['cell', lgl.cell], ...(lgl.extra ?? []).map((x) => ['phone', x])]) {
+    if (!phoneDigits(n) || placed.has(phoneDigits(n))) continue
+    const slot = [label, label === 'phone' ? 'cell' : 'phone'].find((s) => value[s] == null)
+    value[slot] = n
+    placed.add(phoneDigits(n))
+  }
+  return value
 }
 
 // False when VG's first name carries a parenthesized nickname the LGL first name lacks.
