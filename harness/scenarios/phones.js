@@ -26,13 +26,19 @@ export default [
   },
   {
     name: 'lgl-only-phone-with-no-empty-slot-holds-phones-no-slot',
-    why: 'Customer question 3 and the merge rule: a number only LGL has, with both VG slots full, cannot be placed; it is held phones-no-slot and VG keeps its numbers.',
-    since: 3,
+    why: 'Customer question 3 and the merge rule: a number only LGL has, with both VG slots full, cannot be placed; it is held phones-no-slot and VG keeps its numbers. LGL\'s phones are a list (2026-11-19), so VG\'s two numbers are added to LGL beside it; once LGL holds both of VG\'s, the pair agrees (the engineer: VG holds as much of LGL as it can) and the hold closes. The extra number stays in LGL only.',
+    since: 7,
     ...agreeing(corwin, { lgl: { phone_numbers: [{ number: '401-555-0213', type: 'Home' }] } }),
     gifts: [GIFT],
     phases: [
-      { run: 'full', expect: { writes: 0, vg: { phones: { phone: '401-555-0211', cell: '401-555-0212' } }, holds: [{ field: 'phones', reason: 'phones-no-slot' }] } },
-      { run: 'full', expect: { writes: 0, holds: [{ field: 'phones', reason: 'phones-no-slot' }] } },
+      {
+        run: 'full',
+        expect: {
+          writes: 0, lglWrites: 1, vg: { phones: { phone: '401-555-0211', cell: '401-555-0212' } },
+          lglEntries: { phone_numbers: { current: 3, total: 3 } }, holds: [{ field: 'phones', reason: 'phones-no-slot' }],
+        },
+      },
+      { run: 'full', expect: { writes: 0, lglWrites: 0, vg: { phones: { phone: '401-555-0211', cell: '401-555-0212' } }, holds: [] } },
     ],
   },
   {

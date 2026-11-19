@@ -228,17 +228,18 @@ export default [
   },
   {
     name: 'work-number-beside-home-is-not-retired',
-    why: 'Step 7, phones: only the entry the sync read is retired. LGL holds a preferred Home number and a Work number; VG\'s new number replaces the Home one, and the Work number stays current.',
+    why: 'Step 7, phones: only the number VG dropped is retired. LGL holds a preferred Home number and a Work number. LGL\'s phones are a list (2026-11-19): the Work number fills VG\'s empty cell on the first pass, and the pair agrees on the next. VG\'s new number then replaces the Home one in LGL, and the Work number stays current.',
     since: 7,
     ...agreeing(work, { lgl: { phone_numbers: [{ number: work.phone, type: 'Home', is_preferred: true }, { number: '401-555-0162', type: 'Work' }] } }),
     gifts: [GIFT],
     phases: [
-      { run: 'full', expect: { writes: 0, holds: [] } },
+      { run: 'full', expect: { writes: 1, lglWrites: 0, vg: { phones: { phone: work.phone, cell: '401-555-0162' } }, holds: [] } },
+      settled({ holds: [] }),
       {
         edit: { vg: { phone: '401-555-0163' } },
         run: 'full',
         expect: {
-          writes: 0, lglWrites: 1, deferred: 0, lgl: { phones: { phone: '401-555-0163', cell: null } },
+          writes: 0, lglWrites: 1, deferred: 0, lgl: { phones: { phone: '401-555-0163', cell: '401-555-0162' } },
           lglEntries: { phone_numbers: { current: 2, total: 3 } }, holds: [],
         },
       },
