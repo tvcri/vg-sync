@@ -7,7 +7,7 @@ WORKDIR /app
 ARG IMAGE_REVISION=
 ENV IMAGE_REVISION=$IMAGE_REVISION
 
-COPY package.json policy.json ./
+COPY package.json policy.json policy-reconcile.json ./
 COPY src ./src
 
 RUN mkdir -p /app/out && chown node:node /app/out

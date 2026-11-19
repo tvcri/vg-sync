@@ -104,6 +104,74 @@ needs the engineer's go-ahead.
    Then `LGL_WRITE_ALLOW=all` in the service's `.env`. The production backup
    will have moved by then; the counts are a guide, not a promise.
 
+   **Run this pass as the reconciliation** (see "Reconcile blanks before staff
+   see holds" below): `POLICY_FILE=policy-reconcile.json` for this one run
+   only. Point staff at VG's LGL sync screen only after it.
+
+## Reconcile blanks before staff see holds
+
+Decided 2026-11-19 by @csmig (an engineering decision, not a customer one).
+
+**A blank is never an authoritative value.** Where one system has a value
+and the other has none, and the pair has never agreed, the blank side takes
+the other side's value. This is a one-off reconciliation at go-live, not a
+standing rule: `never-agreed` is a go-live state, and the ongoing policy is
+about edits after agreement.
+
+Why: the 2026-11-19 rehearsal (production snapshot of 11:00, seed-import,
+then a VG-only full pass) opened 152 holds. 63 are nickname holds, and 62
+of those are one side blank, not a disagreement. Putting non-decisions in
+front of staff on day 1 is the failure to avoid.
+
+What to build:
+
+- A policy action that fills only a blank side, in either direction, and
+  holds a real difference exactly as today (`fill-blank`, or another name).
+  No existing action does this: `to-lgl` on `never-agreed` also overwrites a
+  different LGL value, and `to-vg` empties VG wherever LGL is blank
+  (`docs/policy.json.5.md`).
+- `policy-reconcile.json`: `policy.json` with `fill-blank` on `never-agreed`
+  for the four name fields. Address and phones already fill a blank side
+  from the other on `never-agreed`; check that, don't assume it. **Email
+  stays as it is** (held when only LGL has one): a new VG email can put a
+  person on VG's mailings, so copying them waits for staff to agree to that.
+- After the run, the filled pairs are agreed in the sync memory, and the
+  open holds the pass no longer wants close as usual.
+
+Unchanged:
+
+- `policy.json` keeps `hold` on `never-agreed` for names. After
+  reconciliation, a blank that appears is someone clearing a value, and
+  clearing stays held in both directions.
+- Real differences (first names, phone slots, couples, PO boxes) still go to
+  staff as holds.
+
+Check before go-live: rerun the rehearsal with the reconcile policy and
+compare the open-hold count with 152. Expect about 90; most of the 30 first
+name holds look like real differences.
+
+**Built 2026-11-19** (branch `fill-blank`): the `fill-blank` action (allowed
+on `never-agreed` only; an unclean LGL value is held `unclean`, not filled),
+`policy-reconcile.json`, which the image now carries, and
+`docs/policy.json.5.md`. Checked:
+
+- Address does **not** fill a blank side: `to-lgl` holds a VG blank as
+  `never-agreed`. The rehearsal has no such pair, so it is left as it is.
+  Phones' `merge` fills both ways, as assumed.
+- Dry full passes on the rehearsal's database (2026-11-19, production LGL;
+  `out/dry-2026-11-19-reconcile/`): with `policy.json` 152 open; with
+  `policy-reconcile.json` **88**. Nicknames 63 → 1 held (8 filled in VG, 54
+  in LGL), first names 30 → 29 (1 filled in LGL), suffix 1 → 0; the 3 last
+  names stay. The backlog pass therefore sends about 56 more LGL name
+  writes than the step 7 counts above.
+- The customer's answer to question 3 (2026-11-12) was "names listed, not
+  changed". Filling a blank name goes past it; the design's policy section
+  says so.
+
+Also: the README's "Setting up the service account" says to grant the Staff
+role. Since VG's #155 the account's role is Sync Service (role 8, federation
+level), as "Where things stand" above already says. Fixed 2026-11-19.
+
 ## Still open
 
 Carried from the 2026-11-15 handoff:

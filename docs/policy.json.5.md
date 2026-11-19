@@ -96,9 +96,12 @@ which side changed.
 | `to-lgl-else-hold` | any | As `to-lgl`, but an empty VG value is held as `never-agreed`. Used for email. |
 | `merge` | `phones` only | Fill each side's empty slots from the other: a number only LGL has goes to VG, one only VG has goes to LGL. A number with no free slot is held (`phones-no-slot`). Records no agreed value; the next run finds them agreeing. |
 | `toward-deceased` | `deceased` only | Whichever side has the mark gives it to the other, with its date. Two marks with different dates are held. |
+| `fill-blank` | any; `never-agreed` only | Fill only an empty side: LGL's value goes to VG where VG has none, VG's to LGL where LGL has none. Two different values are held as `never-agreed`, as `hold` would. An unclean LGL value is not empty: it is held `unclean`. |
 
 `merge` and `toward-deceased` are accepted on any field by the file's
-checks, but mean something only on the fields shown.
+checks, but mean something only on the fields shown. `fill-blank` on any
+case but `never-agreed` stops the run: on a cleared value it would undo the
+clearing.
 
 ## WHAT THE POLICY CANNOT OVERRIDE
 
@@ -163,14 +166,23 @@ decision, not yet made):
 Where VG has a nickname and LGL has none, LGL is filled in. Where only LGL
 has one, the pair is still held (an empty VG value is never written to LGL).
 Where both have different ones, VG's replaces LGL's. Using `to-vg` here
-instead would empty VG's nickname wherever LGL has none. Filling only a
-blank side, in either direction, is not an action yet.
+instead would empty VG's nickname wherever LGL has none. To fill only a
+blank side, in either direction, and hold the rest, use `fill-blank`.
 
 Hold every change to email while something is investigated:
 
 ```json
 "email": {}
 ```
+
+`policy-reconcile.json`
+: `policy.json` with `fill-blank` on `never-agreed` for the four name
+fields, and nothing else changed. For the one go-live backlog pass only
+(`POLICY_FILE=policy-reconcile.json`), so that a name only one system has
+never reaches staff as a hold (the engineer, 2026-11-19). After that pass the
+filled pairs are agreed, and `policy.json` holds a name cleared later as
+before. Email is left out on purpose: a new VG email can put a person on
+VG's mailings. The image carries both files.
 
 ## SEE ALSO
 

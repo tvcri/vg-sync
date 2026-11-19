@@ -705,3 +705,37 @@ test('phones with one unclean slot: an edit of the clean slot gives another expe
   assert.notEqual(a, '')
   assert.notEqual(a, b)
 })
+
+// fill-blank (the go-live reconciliation, policy-reconcile.json): only a blank side is filled.
+const reconcile = parsePolicy(readFileSync(new URL('../../policy-reconcile.json', import.meta.url), 'utf8'))
+const planReconcile = (o = {}) => plan({ policy: reconcile, ...o })
+
+test('fill-blank, VG blank: LGL\'s nickname goes to VG and the pair is agreed, no hold', () => {
+  const p = planReconcile({ constituents: [con({ nick_name: 'Janie' })] })
+  assert.deepEqual(p.holds, [])
+  const [d] = decisionsFor(p, 'nickname')
+  assert.deepEqual([d.case, d.action, d.outcome], ['never-agreed', 'fill-blank', 'write-vg'])
+  const w = p.writes.find((x) => x.kind === 'person')
+  assert.deepEqual(w.fields.nickname.body, { nickname: 'Janie' })
+  assert.equal(w.fields.nickname.agree.value, 'Janie')
+})
+
+test('fill-blank, LGL blank: VG\'s nickname goes to LGL, no hold', () => {
+  const p = planReconcile({ persons: [per({ detail: { nickname: 'Janie' } })], ...on })
+  assert.deepEqual(p.holds, [])
+  assert.deepEqual(p.lglWrites.map((w) => [w.field, w.case, w.value, w.send]), [['nickname', 'never-agreed', 'Janie', true]])
+  assert.equal(decisionsFor(p, 'nickname')[0].action, 'fill-blank')
+})
+
+test('fill-blank, both filled and different: held never-agreed exactly as hold would', () => {
+  const o = { constituents: [con({ nick_name: 'Janie' })], persons: [per({ detail: { nickname: 'Jay' } })], ...on }
+  const p = planReconcile(o)
+  assert.deepEqual(p.holds.map((h) => [h.field, h.reason]), [['nickname', 'never-agreed']])
+  assert.deepEqual([p.writes, p.lglWrites], [[], []])
+  assert.deepEqual(p.holds, plan(o).holds)
+})
+
+test('fill-blank keeps the guards: a couple\'s first names are still held couple', () => {
+  const p = planReconcile({ constituents: [coupleCon()], persons: couplePersons() })
+  assert.deepEqual(p.holds.filter((x) => x.field === 'firstName').map((x) => [x.personId, x.reason]), [['7', 'couple'], ['8', 'couple']])
+})

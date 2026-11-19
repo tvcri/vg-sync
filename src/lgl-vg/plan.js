@@ -257,7 +257,8 @@ export function planLinked({
         const problem = lgl.problems[f]
         if (problem === 'ambiguous') { tally(f, problem); held(problem); continue }
         // Guards, Unclean: an unclean LGL value is never copied to VG; a copy from VG that would repair it goes ahead.
-        if (problem === 'unclean' && COPIES_TO_VG.has(policy.fieldAction(f, kase))) { tally(f, problem); held(problem); continue }
+        // fill-blank copies either way, and an unclean value is not a blank: it is held too.
+        if (problem === 'unclean' && (COPIES_TO_VG.has(policy.fieldAction(f, kase)) || policy.fieldAction(f, kase) === 'fill-blank')) { tally(f, problem); held(problem); continue }
         tally(f, kase)
         if (kase === 'same') continue
         const agreeRow = {
@@ -285,7 +286,11 @@ export function planLinked({
         }
         // toward-deceased copies a deceased mark LGL has and VG lacks to VG, and one VG has and LGL
         // lacks to LGL; two marks with different dates are held
-        const copies = action === 'to-vg' || (action === 'toward-deceased' && lglValue.flag && !r.vg.flag)
+        // fill-blank copies LGL's value to VG where VG's is empty, VG's to LGL where LGL's is empty,
+        // and holds two different values under their case, as hold does.
+        const lglC = comparable(f, lglValue)
+        const copies = action === 'to-vg' || (action === 'toward-deceased' && lglValue.flag && !r.vg.flag) ||
+          (action === 'fill-blank' && r.vgC === '' && lglC !== '')
         if (copies) {
           if (isCouple && SHARED.has(f) && policy.setting('couple-lgl-changed') !== 'to-vg') policyHold('couple')
           else if (f === 'firstName' && !keepsNickname(lglValue, r.vg)) policyHold('lost-nickname')
@@ -303,7 +308,7 @@ export function planLinked({
           if (m.placed > 0) toVg(m.value, null)
           // A VG-only number LGL has no free type group for is not written; it is held as no slot.
           if (m.vgOnly.length && !lglWrite(c, lgl, [{ dec, r }], { value: r.vg, merge: true }) && !m.unplaced.length) policyHold('phones-no-slot')
-        } else if (action === 'to-lgl-else-hold' || action === 'to-lgl') toLgl()
+        } else if (action === 'to-lgl-else-hold' || action === 'to-lgl' || (action === 'fill-blank' && lglC === '' && r.vgC !== '')) toLgl()
         else policyHold(kase)
       }
       if (coupleRows.length === rows.length) lglWrite(c, lgl, coupleRows, { value: lglValueOf(f, coupleRows[0].r.vg) })

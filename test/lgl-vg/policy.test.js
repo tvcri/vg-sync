@@ -60,3 +60,22 @@ test('lgl-addressee takes if-default or never, and nothing else', () => {
   assert.equal(parsePolicy(JSON.stringify({ settings: { 'lgl-addressee': 'if-default' } })).setting('lgl-addressee'), 'if-default')
   assert.throws(() => parsePolicy(JSON.stringify({ settings: { 'lgl-addressee': 'always' } })), /unknown setting value/)
 })
+
+test('fill-blank is accepted on never-agreed only', () => {
+  assert.equal(parsePolicy(make({ fields: { nickname: { 'never-agreed': 'fill-blank' } } })).fieldAction('nickname', 'never-agreed'), 'fill-blank')
+  for (const kase of CASES.filter((k) => k !== 'never-agreed')) {
+    assert.throws(() => parsePolicy(make({ fields: { nickname: { [kase]: 'fill-blank' } } })), /fill-blank.*never-agreed/)
+  }
+})
+
+test('policy-reconcile.json is policy.json with fill-blank on never-agreed for the four names, nothing else', () => {
+  const base = JSON.parse(text)
+  const rec = JSON.parse(readFileSync(new URL('../../policy-reconcile.json', import.meta.url), 'utf8'))
+  parsePolicy(JSON.stringify(rec))
+  const names = ['firstName', 'lastName', 'suffix', 'nickname']
+  for (const f of FIELDS) {
+    const want = names.includes(f) ? { ...base.fields[f], 'never-agreed': 'fill-blank' } : base.fields[f]
+    assert.deepEqual(rec.fields[f], want, f)
+  }
+  assert.deepEqual([rec.records, rec.settings], [base.records, base.settings])
+})

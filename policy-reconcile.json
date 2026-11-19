@@ -1,0 +1,17 @@
+{
+  "fields": {
+    "firstName": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "fill-blank" },
+    "lastName": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "fill-blank" },
+    "suffix": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "fill-blank" },
+    "nickname": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "fill-blank" },
+    "address": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "to-lgl" },
+    "email": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "to-lgl-else-hold" },
+    "phones": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "merge" },
+    "deceased": { "lgl-changed": "to-vg", "vg-changed": "to-lgl", "both-changed": "to-lgl", "never-agreed": "toward-deceased" }
+  },
+  "records": { "lgl-missing": "unlink", "no-longer-donor": "hold" },
+  "settings": { "couple-lgl-changed": "to-vg", "lgl-addressee": "if-default" },
+  "decided": {
+    "fields": "2026-11-12, customer answers to the seven decisions; see the design's For the customer",
+    "reconcile": "2026-11-19, the engineer: for the one go-live backlog pass only (docs/handoff-2026-11-16-go-live.md, \"Reconcile blanks before staff see holds\"). A name only one system has fills the blank side; two different names are held as before." }
+}

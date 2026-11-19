@@ -530,6 +530,7 @@ Each row names a field, a case, and an action. A `*` row for every field is not 
 | `to-vg` | Copy LGL's value to VG. |
 | `to-lgl` | Copy VG's value to LGL. |
 | `hold` | Leave both alone and open a hold. |
+| `fill-blank` | `never-agreed` only: fill the empty side from the other; hold two different values. Added 2026-11-19 for the go-live reconciliation below. |
 
 A field and case with no row is `hold`. A row can carry a note and the date
 the customer decided it.
@@ -556,6 +557,15 @@ the customer"):
   email can put a person on VG's mailings.
 - Clearing a value is held in both directions. It was not asked, and
   "nothing in LGL is deleted" points that way.
+- **The go-live reconciliation (the engineer, 2026-11-19).** The go-live
+  backlog pass runs once with `policy-reconcile.json`: `fill-blank` on
+  `never-agreed` for the four names. A blank is not an authoritative value,
+  so a name only one system has fills the other, and only names that really
+  differ are listed for staff. The 2026-11-19 rehearsal found 62 of 63
+  nickname holds were one side blank. This goes past question 3's answer
+  ("names listed, not changed") for a name only one system has; whether
+  the customer is told is the engineer's call. Email stays held, as above.
+  `policy.json` is unchanged, so a name cleared after go-live is held.
 - For deceased, question 4: the mark goes either way with its date, and is
   never removed by the service (see the guard below).
 

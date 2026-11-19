@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto'
 import { FIELDS } from './fields.js'
 
 const CASES = ['same', 'first-match', 'converged', 'lgl-changed', 'vg-changed', 'lgl-cleared', 'vg-cleared', 'both-changed', 'never-agreed']
-const ACTIONS = ['to-vg', 'to-lgl', 'hold', 'merge', 'toward-deceased', 'to-lgl-else-hold']
+const ACTIONS = ['to-vg', 'to-lgl', 'hold', 'merge', 'toward-deceased', 'to-lgl-else-hold', 'fill-blank']
+// fill-blank fills only an empty side, so it means something only where the two have never agreed:
+// on any other case it would undo a clearing or overwrite nothing useful.
+const ONLY_ON = { 'fill-blank': 'never-agreed' }
 const RECORD_ACTIONS = { 'lgl-missing': ['hold', 'unlink'], 'no-longer-donor': ['hold', 'unlink'] }
 const LGL_ADDRESSEE = ['if-default', 'never']
 
@@ -28,6 +31,7 @@ export function parsePolicy(text) {
     for (const [kase, action] of Object.entries(row)) {
       oneOf('case', kase, CASES)
       oneOf('action', action, ACTIONS)
+      if (ONLY_ON[action] && ONLY_ON[action] !== kase) throw new Error(`policy: action "${action}" is allowed on ${ONLY_ON[action]} only (${field}.${kase})`)
     }
   }
   for (const [kind, action] of Object.entries(records)) {

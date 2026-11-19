@@ -17,7 +17,8 @@ output and writes row-level details to a file under `out/`.
 
 Configuration comes from environment variables, or a `.env` file in the working
 directory. The variable names are listed in `.env.example`. The service account
-needs a Keycloak client on the target VG and the Staff role there.
+needs a Keycloak client on the target VG and the Sync Service role there
+(role 8, at federation level).
 
 Three ways to run it:
 
@@ -72,7 +73,8 @@ The service ships as the Docker image `carlsmig/vg-sync`, built by
 `.github/workflows/publish-docker.yml` on every push to `main` and tagged
 `:<sha7>` and `:latest`. The image carries the commit in the
 `org.opencontainers.image.revision` label and the `IMAGE_REVISION`
-environment variable. It holds only `src/`, `package.json` and `policy.json`;
+environment variable. It holds only `src/`, `package.json`, `policy.json` and
+`policy-reconcile.json` (the go-live pass's rules, `docs/policy.json.5.md`);
 two things are bind mounts:
 
 - `.env` to `/app/.env` (read-only)
@@ -228,9 +230,10 @@ restored database:
 
 1. Run `npm run setup`. The first request creates the user row. It prints the
    account's user name, then stops at the owed privacy acknowledgement.
-2. In VG, grant the Staff role at federation level to the user name it printed.
+2. In VG, grant the Sync Service role (role 8) at federation level to the user
+   name it printed.
 3. Run `npm run setup -- --acknowledge-privacy`. This records the account's own
-   acknowledgement of the current privacy rules, the only write this service
+   acknowledgement of the current privacy rules, the only write `setup`
    makes to VG. It then checks that persons can be read and prints `SETUP OK`.
 4. Run the report.
 
