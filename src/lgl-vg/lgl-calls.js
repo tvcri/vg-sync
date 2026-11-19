@@ -68,7 +68,8 @@ function phoneCalls (id, write, constituent) {
   const lglKeys = new Set(current.map(keyOf).filter(Boolean))
   const vgKeys = new Set(['phone', 'cell'].map((s) => phoneKey(write.value?.[s])).filter(Boolean))
   // in the read's order (preferred first, then newest), so a number replaces the one shown in its slot
-  const olds = write.merge ? [] : current.filter((e) => !vgKeys.has(keyOf(e)))
+  // a write retires only numbers in `retirable` when it is given (the agreed ones: LGL's extras stay)
+  const olds = write.merge ? [] : current.filter((e) => !vgKeys.has(keyOf(e)) && (!write.retirable || write.retirable.includes(keyOf(e))))
     .sort((a, b) => Number(Boolean(b.is_preferred)) - Number(Boolean(a.is_preferred)) || Number(b.id) - Number(a.id))
   // Each new number, with the old entry it replaces (none in a merge, or once the olds run out).
   const adds = []

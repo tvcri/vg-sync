@@ -53,11 +53,11 @@ export function createBody (c) {
     for (const k of ['street', 'unit', 'city', 'state', 'zip']) put(k, values.address[k])
   }
   if (!problems.phones && values.phones) { put('phone', values.phones.phone); put('cell', values.phones.cell) }
-  // VG takes two numbers: with more in LGL the pair does not agree, so no phones memory (the next
-  // pass holds the number with no slot)
-  const agrees = (f) => !problems[f] && !(f === 'phones' && values.phones?.extra)
-  const agree = FIELDS.filter(agrees).map((f) => ({
-    field: f, lglConstituentId: String(c.id), value: values[f] ?? null,
+  // VG takes two numbers: with more in LGL, the memory records the two VG is given (the plan's
+  // phones comparison treats LGL's longer list holding both as agreeing)
+  const valueOf = (f) => (f === 'phones' && values.phones?.extra ? { phone: values.phones.phone, cell: values.phones.cell } : values[f] ?? null)
+  const agree = FIELDS.filter((f) => !problems[f]).map((f) => ({
+    field: f, lglConstituentId: String(c.id), value: valueOf(f),
     lglEntryId: ENTRY_FIELDS.has(f) && entryIds[f] != null ? String(entryIds[f]) : null,
   }))
   const address = body.street ? { street: body.street, city: body.city, state: body.state, zip: body.zip } : null

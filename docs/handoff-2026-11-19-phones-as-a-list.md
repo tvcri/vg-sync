@@ -4,6 +4,32 @@
 `tvcri/village-green`). Board item VG-202611-521 (#153); commits end with
 `Refs #153`.
 
+## Status (2026-11-19, built)
+
+Built on branch `phones-list` in this repo; the design spec's "LGL's
+phones" section has the rules as built. The slot rule chosen: preferred
+first, then newest (highest entry id); Phone takes the first non-mobile,
+Cell the first mobile, an empty slot the next of either type.
+
+The engineer added one rule during the build: when VG's two slots hold two
+numbers and both are in LGL's longer list, the pair agrees (10 donors in
+the rehearsal have three current numbers in LGL, two of them in VG). Without
+it they would have been new `phones-no-slot` holds.
+
+Dry full passes on the rehearsal's database after its reconcile pass
+(production LGL, `out/dry-2026-11-19-phones2-*`): with
+`policy-reconcile.json`, **75** open (71 planned plus 4 carried
+import-holds), against 88. `phones-no-slot` 25 → 12; 24 phone merges now plan
+an LGL add. Of the 12, 5 are VG people with the same number in both slots
+and an LGL number VG lacks; 4 come from memory the dev database recorded
+under the old read (in production, with no memory before go-live, they
+merge instead). Not run: the harness (it reseeds the dev database, which
+holds this rehearsal) and the trial account.
+
+`phones-no-slot` now means: an LGL number VG has no free slot for (or a VG
+edit that would retire more LGL numbers than it adds). VG's sentence "LGL
+has more numbers than VG has room for" fits.
+
 ## The problem
 
 The 2026-11-19 rehearsal (production snapshot of 15:45, seed-import, a

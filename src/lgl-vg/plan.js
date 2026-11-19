@@ -62,6 +62,10 @@ function uncleanCase(vgC, agreedC) {
   return vgC === agreedC ? 'lgl-changed' : 'both-changed'
 }
 
+// The LGL numbers a phones write may retire: the agreed ones (LGL's extras are kept), or any when
+// the pair never agreed.
+const retirableOf = (r) => (r.agreedC ? numbersOf(r.agreedC) : null)
+
 export const fingerprint = (parts) => createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32)
 
 // VG's value in the form an LGL write sends it: an address's state as its two-letter code; null
@@ -72,14 +76,27 @@ function lglValueOf(field, vgValue) {
   return state ? { ...vgValue, state } : null
 }
 
-// Why VG's phones cannot go to LGL as they are, or null. A write makes LGL's numbers VG's, each
-// dropped LGL number retired for a new one; with fewer VG numbers than LGL has (clean or not), one
-// would be retired with nothing in its place. That is a clear when VG has an empty slot (never
+// A phones comparable form as a list of numbers.
+const numbersOf = (c) => (c ? c.split(',') : [])
+// True when `ref` (a comparable form) is two numbers, both in LGL's longer list: VG's two slots hold
+// as much of LGL as they can, so the extra LGL numbers are not a difference.
+const covers = (ref, lglC) => {
+  const r = numbersOf(ref)
+  const l = new Set(numbersOf(lglC))
+  return r.length === 2 && l.size > 2 && r.every((x) => l.has(x))
+}
+
+// Why VG's phones cannot go to LGL as they are, or null. A write adds VG's new numbers and retires
+// the LGL numbers VG dropped (of `retirable`, the agreed numbers; all of LGL's when none), each for
+// a new one. One retired with nothing in its place is a clear when VG has an empty slot (never
 // written), and an LGL number with no VG slot when it has none.
-function phonesShortfall (lgl, vg) {
+function phonesShortfall (lgl, vg, retirable) {
   const keys = (v) => new Set(phoneNumbers(v).map(phoneKey).filter(Boolean))
-  const read = lgl.problems.phones === 'unclean' ? lgl.raw.phones : lgl.values.phones
-  if (keys(vg).size >= keys(read).size) return null
+  const read = keys(lgl.problems.phones === 'unclean' ? lgl.raw.phones : lgl.values.phones)
+  const ours = keys(vg)
+  const adds = [...ours].filter((k) => !read.has(k)).length
+  const retires = [...read].filter((k) => !ours.has(k) && (!retirable || retirable.includes(k))).length
+  if (retires <= adds) return null
   return vg.phone && vg.cell ? 'phones-no-slot' : 'vg-cleared'
 }
 
@@ -182,6 +199,7 @@ export function planLinked({
     const write = {
       kind: 'lgl', constituentId: key, personIds: rows.map((x) => x.dec.personId), field: f, case: kase,
       value, expect: lglExpect(lgl, f), fingerprint: fpWrite, merge,
+      ...(f === 'phones' && !merge && retirableOf(rows[0].r) ? { retirable: retirableOf(rows[0].r) } : {}),
     }
     const { calls } = buildLglCalls(write, c, { addresseeSetting })
     if (!calls.length) {
@@ -235,11 +253,15 @@ export function planLinked({
         const vgC = comparable(f, vgs[i][f])
         const agreedC = agreed ? comparable(f, agreed.value) : undefined
         const problem = lgl.problems[f]
+        // Phones: LGL's longer list compares as VG's two numbers while it holds both, and else as the
+        // agreed two while it holds those (so a VG edit is vg-changed, not both-changed).
+        const lglCmp = f !== 'phones' || problem ? lglC
+          : covers(vgC, lglC) ? vgC : covers(agreedC, lglC) ? agreedC : lglC
         const kase = problem === 'ambiguous' ? undefined
           : problem === 'unclean' ? uncleanCase(vgC, agreedC)
-            : compareField(lglC, vgC, agreedC)
+            : compareField(lglCmp, vgC, agreedC)
         return {
-          vg: vgs[i][f], vgC, kase, fp: fingerprint([lglFp, vgC, agreedC ?? null]),
+          vg: vgs[i][f], vgC, agreedC, covered: lglCmp !== lglC, kase, fp: fingerprint([lglFp, vgC, agreedC ?? null]),
           d: { kind: 'field', personId, constituentId: key, field: f },
           detail: { lgl: unclean ? lgl.raw[f] : lglValue, vg: vgs[i][f], agreed: agreed ? agreed.value : null },
         }
@@ -269,6 +291,8 @@ export function planLinked({
           personId: d.personId, field: f, lglConstituentId: key, value: lglValue,
           lglEntryId: ENTRY_FIELDS.has(f) && lgl.entryIds[f] != null ? String(lgl.entryIds[f]) : null,
         }
+        // covered phones agree on VG's two numbers, not LGL's whole list
+        if (r.covered && kase !== 'never-agreed') agreeRow.value = { phone: r.vg.phone, cell: r.vg.cell }
         if (isCouple && (SHARED.has(f) ? sharedBlocked : !COUPLE_OK_UNIT.has(kase))) { held('couple'); continue }
         if (kase === 'first-match' || kase === 'converged') {
           agree.push(agreeRow)
@@ -284,7 +308,7 @@ export function planLinked({
         const toLgl = () => {
           if (r.vgC === '') policyHold(action === 'to-lgl-else-hold' ? 'never-agreed' : kase)
           else if (f === 'deceased' && !r.vg.flag) policyHold('deceased-removed')
-          else if (f === 'phones' && phonesShortfall(lgl, r.vg)) policyHold(phonesShortfall(lgl, r.vg))
+          else if (f === 'phones' && phonesShortfall(lgl, r.vg, retirableOf(r))) policyHold(phonesShortfall(lgl, r.vg, retirableOf(r)))
           else if (coupleToLgl) coupleRows.push({ dec, r })
           else lglWrite(c, lgl, [{ dec, r }], { value: lglValueOf(f, r.vg) })
         }

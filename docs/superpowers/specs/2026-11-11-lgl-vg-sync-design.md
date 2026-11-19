@@ -714,18 +714,25 @@ were people whose LGL record had one number.
   preferred first, then newest first (highest entry id). Phone takes the
   first non-mobile, Cell the first mobile, then an empty slot the next of
   either type; the rest are `extra`.
+- **More numbers in LGL than VG has slots** (the engineer, 2026-11-19):
+  when VG's two slots hold two numbers and both are in LGL's longer list,
+  the pair agrees; LGL's extra numbers stay in LGL only. The comparison
+  reads LGL's list as VG's two numbers while it holds both (or as the agreed
+  two while it holds those), and the memory records VG's two. A VG edit
+  then reaches LGL as one add and one retire: a write retires only numbers
+  in the agreed value, never an LGL extra.
 - **LGL to VG** (`to-vg`, a create): copied only when LGL's numbers fit in
   two slots. A number VG already has stays in its slot; the others fill the
   slots left, LGL's Phone preferring Phone and Cell Cell. More than two is
   held `phones-no-slot`. A person created with more than two gets the first
-  two and no phones memory row, so the next pass holds the rest.
+  two, and the memory records those two.
 - **Merge** (`never-agreed`): LGL numbers VG lacks fill VG's empty slots in
   that order; one with no free slot is held `phones-no-slot`, which now
   means only that. A VG number LGL lacks is added to LGL, typed from its VG
   slot (Phone to Home, Cell to Mobile), whatever that type already holds.
   Nothing is retired or retyped, and the preferred mark is not moved.
-- **VG to LGL** (`to-lgl`): VG's new numbers are added and each LGL number
-  VG no longer has is retired right after the one that replaces it (one of
+- **VG to LGL** (`to-lgl`): VG's new numbers are added and each agreed LGL
+  number VG no longer has is retired right after the one that replaces it (one of
   the same type first, then preferred, then newest). The new number takes
   the mark only from the entry it replaces, or when no kept entry has it.
   With fewer VG numbers than LGL has, a number would be retired with nothing

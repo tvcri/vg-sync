@@ -790,3 +790,38 @@ test('vg-changed phones with fewer numbers than LGL\'s list: held phones-no-slot
   assert.deepEqual(p.holds.map((h) => [h.field, h.reason]), [['phones', 'phones-no-slot']])
   assert.deepEqual(p.lglWrites, [])
 })
+
+// LGL has more numbers than VG has slots, and VG's two are among them: VG holds all it can.
+const three = () => con({ phone_numbers: [
+  { id: 13, number: '401-555-0101', phone_type_name: 'Home', is_preferred: true },
+  { id: 14, number: '401-555-0102', phone_type_name: 'Mobile' },
+  { id: 15, number: '401-555-0103', phone_type_name: 'Home' },
+] })
+const fullVg = (phone = '401-555-0101', cell = '401-555-0102') => per({ phone: { phone, cell } })
+
+test('VG\'s two numbers both in LGL\'s longer list: they agree, and the memory records VG\'s two', () => {
+  const p = plan({ constituents: [three()], persons: [fullVg()], ...on })
+  assert.deepEqual([p.holds, p.writes, p.lglWrites], [[], [], []])
+  assert.equal(decisionsFor(p, 'phones')[0].case, 'first-match')
+  assert.deepEqual(p.agree.find((r) => r.field === 'phones').value, { phone: '401-555-0101', cell: '401-555-0102' })
+})
+
+test('agreed that way, LGL adding yet another number changes nothing', () => {
+  const memory = [...agreedAt(three()).filter((r) => r.field !== 'phones'), mem('phones', { phone: '401-555-0101', cell: '401-555-0102' })]
+  const c = three()
+  c.phone_numbers.push({ id: 16, number: '401-555-0106', phone_type_name: 'Work' })
+  const p = plan({ constituents: [c], persons: [fullVg()], memory, ...on })
+  assert.equal(decisionsFor(p, 'phones').length, 0)
+  assert.deepEqual([p.holds, p.writes, p.lglWrites], [[], [], []])
+})
+
+test('agreed that way, VG replacing a number: LGL gets the new one and retires only the one VG dropped', () => {
+  const memory = [...agreedAt(three()).filter((r) => r.field !== 'phones'), mem('phones', { phone: '401-555-0101', cell: '401-555-0102' })]
+  const p = plan({ constituents: [three()], persons: [fullVg('401-555-0101', '401-555-0109')], memory, ...on })
+  assert.equal(decisionsFor(p, 'phones')[0].case, 'vg-changed')
+  assert.deepEqual(p.holds, [])
+  assert.deepEqual(decisionsFor(p, 'phones')[0].calls, [
+    'LGL POST /constituents/101/phone_numbers {"number":"401-555-0109","phone_type_name":"Mobile","is_preferred":false}',
+    'LGL PATCH /phone_numbers/14 {"not_current":true}',
+  ])
+})
