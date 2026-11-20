@@ -180,7 +180,7 @@ test('setup with --acknowledge-privacy posts nothing when no acknowledgement is 
 test('setup reports a missing role grant on 403 from /persons and returns 1', async () => {
   const h = harness({ personsStatus: 403, personsBody: { error: 'forbidden' } })
   assert.equal(await run(['setup'], h.deps), 1)
-  assert.ok(h.out.includes('service-account-vg-sync has no role grant. Grant it the Staff role at federation level in VG, then run setup again.'))
+  assert.ok(h.out.includes('service-account-vg-sync has no role grant. Grant it the Sync Service role (role 8) at federation level in VG, then run setup again.'))
   assert.equal(h.out.includes('SETUP OK'), false)
 })
 

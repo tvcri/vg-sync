@@ -313,7 +313,7 @@ async function setup(argv, { env, fetchImpl = fetch, now, stdout }) {
       await vg.listPersons()
     } catch (err) {
       if (err.status === 403) {
-        stdout(`${me.username} has no role grant. Grant it the Staff role at federation level in VG, then run setup again.`)
+        stdout(`${me.username} has no role grant. Grant it the Sync Service role (role 8) at federation level in VG, then run setup again.`)
       } else {
         stdout(err.message)
       }
