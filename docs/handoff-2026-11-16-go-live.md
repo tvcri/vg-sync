@@ -72,8 +72,11 @@
 
 ## Go-live tasks for the engineer
 
-The design's "Go-live" has the order; each stage that writes to production LGL
-needs the engineer's go-ahead.
+**Simplified 2026-11-19 by the engineer, after several rehearsals** (the
+last with the mock LGL): the service comes up with writes on in both
+systems at once. The staged rollout planned on 2026-11-16 (LGL writes printed only, a
+handful of donors, the backlog by hand) is dropped. The README's "Go-live
+order" has the steps:
 
 1. The step 5 VM tasks, unchanged:
    1. On the VM, install the new `sidecar-deploy.py` and
@@ -86,27 +89,22 @@ needs the engineer's go-ahead.
       `deploy/docker-compose.example.yml`.
    4. `alerts-sync.sh enable` (never `create` again: it disables them).
 2. `seed-import --write-vg` into production VG, loading the import review's
-   decisions (the README's "Loading the import's decisions"). Needs the
-   engineer's go-ahead.
-3. Start the service with `WRITE_LGL=true` and an empty `LGL_WRITE_ALLOW`: VG
-   writes on, LGL writes printed and counted. Save a full LGL snapshot. Review
-   the first passes' printed calls.
-4. A handful of real donors on the allow-list: a never-agreed address, a PO
-   box, a hand-written addressee, a name change, a couple, a phone and a cell.
-   Check each by hand in LGL, including the address verification rewrite
-   (5 to 11 minutes later).
-5. The backlog, by hand. The 2026-11-16 rehearsal planned about 232 LGL field
-   writes on about 194 people, 322 calls (phones 136 fields, email 52, address
-   43, deceased 1), plus 31 people for VG. That is far over the 50-person
-   breaker, so run `--once full --write-vg --write-lgl` with
-   `LGL_WRITE_ALLOW=all` once to get the breaker's message (it writes nothing
-   and reports the true count), then rerun with `--max-people <n>` from it.
-   Then `LGL_WRITE_ALLOW=all` in the service's `.env`. The production backup
-   will have moved by then; the counts are a guide, not a promise.
+   decisions (the README's "Loading the import's decisions").
+3. Optional, read-only: `report --save-snapshot` before the first write.
+4. Start the service with `WRITE_VG=true`, `WRITE_LGL=true`,
+   `LGL_WRITE_ALLOW=all`, `POLICY_FILE=policy-reconcile.json` and
+   `CIRCUIT_BREAKER_PEOPLE=500`. The service runs a full pass at start; that
+   pass is the backlog and the reconciliation below. At the default breaker
+   of 50 it would fail without writing, and fail again every night.
+   (`--max-people` exists only on the one-off command.)
+5. After the first `PASS OK full`, remove `POLICY_FILE` and
+   `CIRCUIT_BREAKER_PEOPLE` from `.env` and restart. Until then the checks
+   between passes run with the same settings.
+6. Point staff at VG's LGL sync screen only after that pass.
 
-   **Run this pass as the reconciliation** (see "Reconcile blanks before staff
-   see holds" below): `POLICY_FILE=policy-reconcile.json` for this one run
-   only. Point staff at VG's LGL sync screen only after it.
+Counts from the 2026-11-16 rehearsal, as a guide: about 232 LGL field
+writes on about 194 people in 322 calls, plus about 56 name writes from the
+reconcile policy and 31 people for VG.
 
 ## Reconcile blanks before staff see holds
 

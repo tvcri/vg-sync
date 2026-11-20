@@ -437,6 +437,15 @@ only real records have. The go-live is:
 
 Each production LGL write stage needs the engineer's go-ahead.
 
+**Superseded (the engineer, 2026-11-19).** After several rehearsals, the
+last with the mock LGL (`LGL_MOCK`), the stages above are dropped: the
+service comes up with writes on in both systems at once
+(`WRITE_LGL=true`, `LGL_WRITE_ALLOW=all`). Its first full pass is the
+backlog and runs with `POLICY_FILE=policy-reconcile.json` and
+`CIRCUIT_BREAKER_PEOPLE` raised above the backlog (500), both removed after
+that pass. The README's "Go-live order" has the steps. The breaker stays
+the same for every later unattended run.
+
 ## What the rehearsal showed (2026-11-16)
 
 A production backup of 2026-11-16 was restored into the dev VG, the service

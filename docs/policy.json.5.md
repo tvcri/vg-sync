@@ -177,8 +177,8 @@ Hold every change to email while something is investigated:
 
 `policy-reconcile.json`
 : `policy.json` with `fill-blank` on `never-agreed` for the four name
-fields, and nothing else changed. For the one go-live backlog pass only
-(`POLICY_FILE=policy-reconcile.json`), so that a name only one system has
+fields, and nothing else changed. For the service's first full pass at
+go-live only (`POLICY_FILE=policy-reconcile.json`, removed after it), so that a name only one system has
 never reaches staff as a hold (the engineer, 2026-11-19). After that pass the
 filled pairs are agreed, and `policy.json` holds a name cleared later as
 before. Email is left out on purpose: a new VG email can put a person on

@@ -557,8 +557,8 @@ the customer"):
   email can put a person on VG's mailings.
 - Clearing a value is held in both directions. It was not asked, and
   "nothing in LGL is deleted" points that way.
-- **The go-live reconciliation (the engineer, 2026-11-19).** The go-live
-  backlog pass runs once with `policy-reconcile.json`: `fill-blank` on
+- **The go-live reconciliation (the engineer, 2026-11-19).** The service's
+  first full pass (the backlog) runs once with `policy-reconcile.json`: `fill-blank` on
   `never-agreed` for the four names. A blank is not an authoritative value,
   so a name only one system has fills the other, and only names that really
   differ are listed for staff. The 2026-11-19 rehearsal found 62 of 63
@@ -1088,7 +1088,10 @@ writes to production.
    everyone. The circuit breaker caps every run; the backlog pass is run by
    hand with `--max-people` taken from the write run's own breaker message.
    The step 7 design's "Go-live" has the order. The invented records live in
-   the trial account, through the harness.
+   the trial account, through the harness. **Simplified 2026-11-19 by the
+   engineer** after several rehearsals: no stages; the service comes up with
+   writes on in both systems, its first pass (the backlog) run with the
+   reconcile policy and a raised breaker (the README's "Go-live order").
 
 **A trial LGL account for step 3 (2026-11-12).** LGL's Advanced
 Integration Options Guide (February 2024) offers a free test account through

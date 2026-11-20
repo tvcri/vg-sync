@@ -191,23 +191,34 @@ limit of 5000 rows the run fails without writing, since it cannot count.
 
 ### Go-live order
 
-Each stage that writes to production LGL needs the engineer's go-ahead.
+The engineer, 2026-11-19, after several rehearsals: the service comes up
+with writes on in both systems at once. The staged LGL rollout planned on
+2026-11-16 (LGL writes printed only, then a handful of donors, then the
+backlog by hand) is dropped.
 
 1. The service's deployment (VM, compose, alerts), and `seed-import
    --write-vg` into production VG.
-2. The service starts with `WRITE_LGL=true` and an empty `LGL_WRITE_ALLOW`:
-   VG writes on, LGL writes printed and counted. A full LGL snapshot is
-   saved. The first passes' printed calls are reviewed.
-3. A handful of real donors on the allow-list, picked to cover the risky
-   shapes: a never-agreed address, a PO box, a hand-written addressee, a name
-   change, a couple, a phone and a cell. Each is checked by hand in LGL
-   afterwards, including LGL's address verification rewrite.
-4. The backlog, by hand: a dry `--once full` with the allow-list at `all`
-   prints every call; once reviewed, `--once full --write-vg --write-lgl
-   --max-people <n>` with `n` taken from the write run's own breaker message: the run trips,
-   reports the true count and writes nothing, so rerun it with that `n`. Then `LGL_WRITE_ALLOW=all`
-   in the service's `.env`. The breaker stays the same for every unattended
-   run; the one big pass is attended.
+2. Optional, read-only: `report --save-snapshot`, a copy of LGL before the
+   first write.
+3. Start the service with, in its `.env`:
+
+   ```
+   WRITE_VG=true
+   WRITE_LGL=true
+   LGL_WRITE_ALLOW=all
+   POLICY_FILE=policy-reconcile.json
+   CIRCUIT_BREAKER_PEOPLE=500
+   ```
+
+   The service runs a full pass at start. That pass is the backlog (a few
+   hundred people) and the go-live reconciliation, so it needs the
+   reconcile policy and a breaker above the default of 50, which would fail
+   it without writing. 500 is a ceiling, not a target: more people than
+   that means something is wrong.
+4. After the first `PASS OK full`, remove `POLICY_FILE` and
+   `CIRCUIT_BREAKER_PEOPLE` and restart. The checks between passes use the
+   same settings until then, so do it promptly.
+5. Point staff at VG's LGL sync screen.
 
 ## Rehearsing with a mock LGL
 
