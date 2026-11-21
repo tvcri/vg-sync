@@ -321,8 +321,10 @@ differ so that each alert matches one service:
 - **Real-data dry run.** Restore a production snapshot to the local dev
   VG (`vg-utils/mysql-dump`), point the service at the production audience
   with both switches off, and compare its numbers with the hand-run
-  `sync-vg-to-mailchimp.mjs` dry run against the same snapshot. Reads only;
-  an agent may run this without asking.
+  `sync-vg-to-mailchimp.mjs` dry run against the same snapshot. Reads only,
+  but it reads production Mailchimp, so each run needs the engineer's
+  go-ahead (repo `CLAUDE.md`). The `last_changed` check in "A run" step 4
+  is the same kind of read.
 - No scratch Mailchimp audience is needed. If one is used, it must be one
   the engineer creates, never the designer's.
 
