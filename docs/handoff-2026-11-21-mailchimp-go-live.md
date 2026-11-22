@@ -74,14 +74,19 @@ engineer's explicit go-ahead.
 
 ## Still owed by the engineer
 
-1. **Step 3 of Task 12: two production Mailchimp reads**, each needing a
-   go-ahead. (a) The `last_changed` check: read unsubscribed contacts with
-   their member activity and confirm `last_changed` tracks the unsubscribe;
-   if it does not, stop (the 30-day archive age depends on it). (b) The
-   real-data dry run: a production snapshot restored locally
-   (`vg-utils/mysql-dump`), the service dry against the production audience,
-   compared with the hand-run `sync-vg-to-mailchimp.mjs` dry run on the same
-   snapshot. Counts only, names masked.
+1. **Done 2026-11-22: the two production Mailchimp reads** (Step 3 of
+   Task 12; read-only, with the engineer's go-ahead).
+   (a) `last_changed` tracks the unsubscribe: in 40 unsubscribed contacts
+   sampled across the age range (3 to 113 days), `last_changed` matched the
+   `unsub` event in the activity feed to the second. The 30-day archive age
+   is safe to rely on. 117 unsubscribed; 75 older than 30 days.
+   (b) The real-data dry run, on a production snapshot in the dev VG, agreed
+   with the hand-run `sync-vg-to-mailchimp.mjs` dry run on every count:
+   1363 already subscribed, 7 to add, 225 with no email, 23 unsubscribed,
+   19 cleaned, 73 archived. The service also printed `MAILCHIMP CAP
+   archive=75 max=50`: the archive backlog is over the nightly cap, so the
+   first archive is the by-hand run in go-live step 2, with `--max-archive`
+   set to the count on that night's CAP line. Billable was 4540 of 5000.
 2. **village-green: merge and release role 9** (branch `mailchimp-sync-role`,
    commit `29b7b123`), then create the Keycloak client (for example
    `vg-mailchimp`), grant the role at federation level, and run `node
