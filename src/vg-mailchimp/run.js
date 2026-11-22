@@ -12,6 +12,18 @@ const WRITE_GAP_MS = 300
 
 class Stop extends Error {}
 
+// Every read is raced against the run's signal (pattern copied from src/lgl-vg/abort.js createStopper):
+// a read is abandoned the moment the signal fires. Nothing is lost, since a read writes nothing.
+function makeRead (signal) {
+  return (promise) => {
+    if (!signal) return promise
+    if (signal.aborted) { promise.catch(() => {}); return Promise.reject(new Stop()) }
+    let onAbort
+    const stop = new Promise((_, reject) => { onAbort = () => reject(new Stop()); signal.addEventListener('abort', onAbort, { once: true }) })
+    return Promise.race([promise, stop]).finally(() => signal.removeEventListener('abort', onAbort))
+  }
+}
+
 export async function runOnce ({
   config, vg, mc, now, sleep, writeFile, stdout, signal,
   writeAdd, writeArchive, maxAdd, maxArchive,
@@ -24,6 +36,12 @@ export async function runOnce ({
   const saveRecords = () => writeFile(recordsPath, records.map((r) => JSON.stringify(r) + '\n').join(''))
 
   // Every Mailchimp write goes through here: stop check first, then the 300 ms gap after any earlier write.
+  const read = makeRead(signal)
+  // A read-back follows a write that has happened: if the run stops during it, the write is still
+  // recorded (unconfirmed, status null) before the stop goes on up.
+  const readBack = async (promise, onStop) => {
+    try { return await read(promise) } catch (err) { if (err instanceof Stop) onStop(); throw err }
+  }
   let wrote = false
   const beforeWrite = async () => {
     if (signal?.aborted) throw new Stop()
@@ -34,7 +52,8 @@ export async function runOnce ({
 
   try {
     // 1. Read VG. The cohort floor is checked before any Mailchimp request.
-    const persons = await vg.listPersons()
+    if (signal?.aborted) throw new Stop()
+    const persons = await read(vg.listPersons())
     const { cohortSize, candidates, leftOut } = buildCandidates(persons ?? [])
     if (!persons?.length || cohortSize < config.minCohort) {
       throw Object.assign(new Error(`cohort ${cohortSize} is below MIN_COHORT ${config.minCohort}`), { final: true })
@@ -43,8 +62,8 @@ export async function runOnce ({
     for (const l of leftOut) record({ kind: 'left-out', reason: l.reason, personIds: l.personIds, email: l.email, hash: null })
 
     // 2. Read the audience.
-    const list = await mc.getList()
-    const members = await mc.listMembers()
+    const list = await read(mc.getList())
+    const members = await read(mc.listMembers())
     const audience = new Map()
     for (const m of members) audience.set(subscriberHash(m.email_address), m)
 
@@ -66,7 +85,7 @@ export async function runOnce ({
         const hash = subscriberHash(email)
         const base = { personIds: [], email, hash }
         if (signal?.aborted) throw new Stop()
-        const before = await mc.getMember(hash)
+        const before = await read(mc.getMember(hash))
         if (before?.status !== 'unsubscribed') {
           const status = before?.status ?? null
           record({ kind: 'archive-skipped', reason: status, ...base, status })
@@ -74,7 +93,7 @@ export async function runOnce ({
         }
         await beforeWrite()
         await mc.archiveMember(hash)
-        const after = await mc.getMember(hash)
+        const after = await readBack(mc.getMember(hash), () => record({ kind: 'archive-skipped', reason: null, ...base, status: null }))
         const status = after?.status ?? null
         if (status === 'archived') {
           archives++
@@ -86,7 +105,7 @@ export async function runOnce ({
     }
 
     // Billable is re-read after archiving and before the guard.
-    const after = await mc.getList()
+    const after = await read(mc.getList())
     const used = billable(after.stats)
 
     // 5. Classify.
@@ -96,7 +115,7 @@ export async function runOnce ({
       const base = { personIds: c.personIds, email: c.email, hash: c.hash }
       let status = audience.get(c.hash)?.status ?? null
       if (status === null) {
-        const found = await mc.getMember(c.hash)
+        const found = await read(mc.getMember(c.hash))
         status = found === null ? null : (found.status ?? 'unknown')
       }
       const { action, reason } = classify(c, status)
@@ -121,7 +140,7 @@ export async function runOnce ({
         const base = { personIds: c.personIds, email: c.email, hash: c.hash }
         await beforeWrite()
         await mc.putMember(c.hash, { email: c.email, firstName: c.firstName, lastName: c.lastName })
-        const back = await mc.getMember(c.hash)
+        const back = await readBack(mc.getMember(c.hash), () => record({ kind: 'left-out', reason: 'write-unconfirmed', ...base, status: null }))
         const status = back?.status ?? null
         if (status === 'subscribed') {
           added++

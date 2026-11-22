@@ -282,12 +282,9 @@ test('300 ms sleep between consecutive writes, none before the first', async () 
 
 test('abort with shutdown between two adds → stopped, first recorded, no FAILED line', async () => {
   const ac = new AbortController()
-  const wrap = async (next, url, init) => {
-    const res = await next(url, init)
-    if (init.method === 'PUT') ac.abort('shutdown')
-    return res
-  }
-  const h = setup({ persons: threeNew(), wrap, signal: ac.signal, writeAdd: true })
+  // Fires in the 300 ms gap after the first add is confirmed, so the stop lands before the second PUT.
+  const sleep = async () => { ac.abort('shutdown') }
+  const h = setup({ persons: threeNew(), sleep, signal: ac.signal, writeAdd: true })
   const r = await h.run()
   assert.deepEqual(r, { outcome: 'stopped', retryable: false, runId: RUN_ID })
   assert.equal(h.writes().length, 1)
@@ -324,4 +321,60 @@ test('thrown error → FAILED line; 401 is not retryable, 500 is; records still 
   const h2 = setup({ persons: [person(1, 'jane@example.org')], wrap: failing(500), writeAdd: true })
   const r2 = await h2.run()
   assert.deepEqual(r2, { outcome: 'failed', retryable: true, runId: RUN_ID })
+})
+
+// A read that never answers: only racing it against the signal can end the run.
+const hang = () => new Promise(() => {})
+
+test('timeout during classify in a dry run (read hangs) → FAILED run timed out, retryable, records written', { timeout: 2000 }, async () => {
+  const ac = new AbortController()
+  const target = subscriberHash('n2@example.org')
+  const wrap = async (next, url, init) => {
+    if (url.toString().endsWith(`/members/${target}`)) { ac.abort('timeout'); return hang() }
+    return next(url, init)
+  }
+  const h = setup({ persons: [...threeNew(), person(4, '')], wrap, signal: ac.signal })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: true, runId: RUN_ID })
+  assert.deepEqual(h.lines, ['MAILCHIMP FAILED run timed out'])
+  assert.deepEqual(h.records().map((x) => x.reason), ['no-email'])
+  assert.ok(!h.events.includes(`GET /lists/list1/members/${subscriberHash('n3@example.org')}`))
+})
+
+test('shutdown during the list read (read hangs) → stopped, no line, records written', { timeout: 2000 }, async () => {
+  const ac = new AbortController()
+  const wrap = async (next, url, init) => {
+    if (new URL(url).pathname.endsWith('/members')) { ac.abort('shutdown'); return hang() }
+    return next(url, init)
+  }
+  const h = setup({ persons: threeNew(), wrap, signal: ac.signal, writeAdd: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'stopped', retryable: false, runId: RUN_ID })
+  assert.deepEqual(h.lines, [])
+  assert.deepEqual(h.records(), [])
+  assert.deepEqual(h.writes(), [])
+})
+
+test('signal already aborted before the run → no reads at all', async () => {
+  const ac = new AbortController()
+  ac.abort('timeout')
+  const h = setup({ persons: threeNew(), signal: ac.signal })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: true, runId: RUN_ID })
+  assert.deepEqual(h.events.filter((e) => !e.startsWith('write ')), [])
+})
+
+test('shutdown during an add read-back (read hangs) → stopped; the PUT is still recorded unconfirmed', { timeout: 2000 }, async () => {
+  const ac = new AbortController()
+  let put = false
+  const wrap = async (next, url, init) => {
+    if (init.method === 'PUT') { put = true; return next(url, init) }
+    if (put && url.toString().endsWith(`/members/${subscriberHash('n1@example.org')}`)) { ac.abort('shutdown'); return hang() }
+    return next(url, init)
+  }
+  const h = setup({ persons: threeNew(), wrap, signal: ac.signal, writeAdd: true })
+  const r = await h.run()
+  assert.equal(r.outcome, 'stopped')
+  assert.equal(h.writes().length, 1)
+  assert.deepEqual(h.records().map((x) => [x.kind, x.reason, x.email, x.status]), [['left-out', 'write-unconfirmed', 'n1@example.org', null]])
 })
