@@ -3,7 +3,9 @@
 // run uses is the code a mock run uses; only the answers come from a file. The state is
 // { list: { id, name }, members: [{ email_address, status, last_changed, merge_fields }] } and is
 // written back after every write. It models only what the audience service relies on: PUT never
-// changes the status of an existing member, DELETE archives. Nothing here reaches the network.
+// changes the status of an existing member, DELETE archives, and a new address at the reserved domain
+// invalid.example is refused with a 400, as Mailchimp refuses an address it judges fake. Nothing here
+// reaches the network.
 import { createMailchimpClient, subscriberHash } from './mailchimp.js'
 
 const BASE = 'https://mock.api.mailchimp.com/3.0'
@@ -59,6 +61,9 @@ export function createMockMailchimpFetch ({ state, persist, now = Date.now }) {
     if (method === 'GET') return existing ? respond(200, existing) : notFound('mock Mailchimp: no such member')
     if (method === 'PUT') {
       if (!existing) {
+        if (/@invalid\.example$/i.test(String(body.email_address ?? '').trim())) {
+          return respond(400, { title: 'Invalid Resource', status: 400, detail: `${body.email_address} looks fake or invalid, please enter a real email address.` })
+        }
         const created = {
           email_address: body.email_address,
           status: body.status_if_new,

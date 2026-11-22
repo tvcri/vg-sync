@@ -3,6 +3,7 @@
 // Read VG, build candidates; read the audience; snapshot (only when a write switch is on); archive
 // (re-read before, read back after); re-read billable; classify; add (billing guard, then cap; read
 // back after each PUT); report. The records file is written once, at the end, also on failure and stop.
+// A contact Mailchimp refuses (a 4xx other than 401) is recorded and the run goes on; see endsRun.
 
 import { buildCandidates } from './cohort.js'
 import { subscriberHash } from './mailchimp.js'
@@ -11,6 +12,13 @@ import { selectArchives, classify, billable, limitAdds, capExceeded, summaryLine
 const WRITE_GAP_MS = 300
 
 class Stop extends Error {}
+
+// An error that ends the run rather than the one contact: a stop, a refused sign-in (401) or anything marked
+// final, and anything that says Mailchimp itself is unwell (429, 5xx or a network error, after the client's
+// retries). Any other 4xx is Mailchimp refusing this one contact: it is recorded and the run goes on.
+const endsRun = (err) => err instanceof Stop || err?.final || typeof err?.status !== 'number' ||
+  err.status < 400 || err.status === 401 || err.status === 429 || err.status >= 500
+const detailOf = (err) => String(err?.detail ?? err?.message ?? '').slice(0, 200)
 
 // Every read is raced against the run's signal (pattern copied from the LGL sync's abort helper):
 // a read is abandoned the moment the signal fires. Nothing is lost, since a read writes nothing.
@@ -35,13 +43,13 @@ export async function runOnce ({
   const record = (r) => records.push({ ...r, at: new Date(now()).toISOString() })
   const saveRecords = () => writeFile(recordsPath, records.map((r) => JSON.stringify(r) + '\n').join(''))
 
-  // Every Mailchimp write goes through here: stop check first, then the 300 ms gap after any earlier write.
   const read = makeRead(signal)
   // A read-back follows a write that has happened: if the run stops during it, the write is still
   // recorded (unconfirmed, status null) before the stop goes on up.
   const readBack = async (promise, onStop) => {
     try { return await read(promise) } catch (err) { if (err instanceof Stop) onStop(); throw err }
   }
+  // Every Mailchimp write goes through here: stop check first, then the 300 ms gap after any earlier write.
   let wrote = false
   const beforeWrite = async () => {
     if (signal?.aborted) throw new Stop()
@@ -61,8 +69,14 @@ export async function runOnce ({
     // Cohort left-outs (no-email, invalid-email) never reach Mailchimp, so they carry no hash.
     for (const l of leftOut) record({ kind: 'left-out', reason: l.reason, personIds: l.personIds, email: l.email, hash: null })
 
-    // 2. Read the audience.
+    // 2. Read the audience. Every run (the service's and --once) refuses an audience whose name is not
+    // MAILCHIMP_LIST_NAME, before any snapshot or write. A mock with no expected name skips the check.
     const list = await read(mc.getList())
+    const listName = config.mailchimp?.listName ?? ''
+    const skipName = config.mailchimp?.mock && listName === ''
+    if (!skipName && list?.name !== listName) {
+      throw Object.assign(new Error(`Mailchimp audience name is "${list?.name}", expected "${listName}"`), { final: true })
+    }
     const members = await read(mc.listMembers())
     const audience = new Map()
     for (const m of members) audience.set(subscriberHash(m.email_address), m)
@@ -84,22 +98,35 @@ export async function runOnce ({
         const email = m.email_address
         const hash = subscriberHash(email)
         const base = { personIds: [], email, hash }
-        if (signal?.aborted) throw new Stop()
-        const before = await read(mc.getMember(hash))
-        if (before?.status !== 'unsubscribed') {
-          const status = before?.status ?? null
-          record({ kind: 'archive-skipped', reason: status, ...base, status })
-          continue
-        }
-        await beforeWrite()
-        await mc.archiveMember(hash)
-        const after = await readBack(mc.getMember(hash), () => record({ kind: 'archive-skipped', reason: null, ...base, status: null }))
-        const status = after?.status ?? null
-        if (status === 'archived') {
-          archives++
-          record({ kind: 'archived', ...base, status })
-        } else {
-          record({ kind: 'archive-skipped', reason: status, ...base, status })
+        let deleted = false
+        try {
+          if (signal?.aborted) throw new Stop()
+          const before = await read(mc.getMember(hash))
+          if (before?.status !== 'unsubscribed') {
+            const status = before?.status ?? null
+            record({ kind: 'archive-skipped', reason: status, ...base, status })
+            continue
+          }
+          await beforeWrite()
+          await mc.archiveMember(hash)
+          deleted = true
+          const after = await readBack(mc.getMember(hash), () => record({ kind: 'archive-skipped', reason: null, ...base, status: null }))
+          const status = after?.status ?? null
+          if (status === 'archived') {
+            archives++
+            record({ kind: 'archived', ...base, status })
+          } else {
+            record({ kind: 'archive-skipped', reason: status, ...base, status })
+          }
+        } catch (err) {
+          if (err instanceof Stop) throw err // a stop during the read-back has already been recorded
+          if (!endsRun(err)) {
+            // Refused (4xx): the DELETE itself (reason rejected), or the read-back after it (unconfirmed).
+            record({ kind: 'archive-skipped', reason: deleted ? null : 'rejected', ...base, status: err.status, detail: detailOf(err) })
+            continue
+          }
+          if (deleted) record({ kind: 'archive-skipped', reason: null, ...base, status: null, detail: detailOf(err) })
+          throw err
         }
       }
     }
@@ -138,15 +165,26 @@ export async function runOnce ({
     } else {
       for (const c of add) {
         const base = { personIds: c.personIds, email: c.email, hash: c.hash }
-        await beforeWrite()
-        await mc.putMember(c.hash, { email: c.email, firstName: c.firstName, lastName: c.lastName })
-        const back = await readBack(mc.getMember(c.hash), () => record({ kind: 'left-out', reason: 'write-unconfirmed', ...base, status: null }))
-        const status = back?.status ?? null
-        if (status === 'subscribed') {
-          added++
-          record({ kind: 'added', ...base, status })
-        } else {
-          record({ kind: 'left-out', reason: 'write-unconfirmed', ...base, status })
+        let put = false
+        try {
+          await beforeWrite()
+          await mc.putMember(c.hash, { email: c.email, firstName: c.firstName, lastName: c.lastName })
+          put = true
+          const back = await readBack(mc.getMember(c.hash), () => record({ kind: 'left-out', reason: 'write-unconfirmed', ...base, status: null }))
+          const status = back?.status ?? null
+          if (status === 'subscribed') {
+            added++
+            record({ kind: 'added', ...base, status })
+          } else {
+            record({ kind: 'left-out', reason: 'write-unconfirmed', ...base, status })
+          }
+        } catch (err) {
+          if (err instanceof Stop) throw err // a stop during the read-back has already been recorded
+          // A PUT that landed is recorded whatever happened to its read-back.
+          if (put) record({ kind: 'left-out', reason: 'write-unconfirmed', ...base, status: null, detail: detailOf(err) })
+          if (endsRun(err)) throw err
+          // Mailchimp refused this one address (4xx): record it and go on to the next.
+          if (!put) record({ kind: 'left-out', reason: 'rejected', ...base, status: err.status, detail: detailOf(err) })
         }
       }
     }

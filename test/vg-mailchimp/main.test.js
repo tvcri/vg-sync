@@ -180,3 +180,12 @@ test('--once --write-add works with no sleep injected (the entry point passes no
   assert.ok(h.state().members.every((m) => m.status === 'subscribed'))
   assert.ok(!h.out.some((l) => l.startsWith('MAILCHIMP FAILED')), h.out.join('\n'))
 })
+
+test('--once --write-add with a mismatched MAILCHIMP_LIST_NAME exits 1 and writes nothing', async () => {
+  const h = harness()
+  h.deps.env = { ...ENV, MAILCHIMP_LIST_NAME: 'Expected Audience' }
+  assert.equal(await run(['--once', '--write-add', '--write-archive'], h.deps), 1)
+  assert.ok(h.out.includes('MAILCHIMP FAILED Mailchimp audience name is "Mock Audience", expected "Expected Audience"'), h.out.join('\n'))
+  assert.equal(h.state().members.length, 0)
+  assert.ok(!h.written.some((w) => w.path === 'mock-state.json' || w.path.startsWith('out/audience-')))
+})

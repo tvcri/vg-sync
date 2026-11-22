@@ -11,7 +11,7 @@ const ago = (days) => new Date(NOW - days * DAY).toISOString()
 
 const config = (o = {}) => ({
   outDir: 'out', minCohort: 1, archiveAfterDays: 30, planLimit: 5000, limitMargin: 100,
-  mailchimp: { listId: 'list1' }, ...o,
+  mailchimp: { listId: 'list1', listName: 'Test List', mock: null }, ...o,
 })
 const person = (id, email, o = {}) => ({
   personId: String(id), deceased: 0, email, memberStatus: 'Active', volunteerStatus: null, donor: null,
@@ -377,4 +377,157 @@ test('shutdown during an add read-back (read hangs) → stopped; the PUT is stil
   assert.equal(r.outcome, 'stopped')
   assert.equal(h.writes().length, 1)
   assert.deepEqual(h.records().map((x) => [x.kind, x.reason, x.email, x.status]), [['left-out', 'write-unconfirmed', 'n1@example.org', null]])
+})
+
+// Per-contact refusals (4xx) are recorded and the run goes on; 401, 429/5xx and network errors fail it.
+const answer = (status, body) => ({ ok: status >= 200 && status < 300, status, statusText: '', headers: { get: () => null }, text: async () => JSON.stringify(body) })
+
+test('add: Mailchimp refuses the second of three (400) → rejected with status and detail, the others added, run ok', async () => {
+  const persons = [person(1, 'n1@example.org'), person(2, 'jane.doe@invalid.example'), person(3, 'n3@example.org')]
+  const h = setup({ persons, writeAdd: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'ok', retryable: false, runId: RUN_ID })
+  assert.equal(h.find('n1@example.org').status, 'subscribed')
+  assert.equal(h.find('n3@example.org').status, 'subscribed')
+  assert.equal(h.find('jane.doe@invalid.example'), undefined)
+  const recs = h.records()
+  assert.deepEqual(recs.map((x) => [x.kind, x.reason ?? null, x.email]), [
+    ['added', null, 'n1@example.org'],
+    ['left-out', 'rejected', 'jane.doe@invalid.example'],
+    ['added', null, 'n3@example.org'],
+  ])
+  const rej = recs[1]
+  assert.deepEqual(Object.keys(rej).sort(), ['at', 'detail', 'email', 'hash', 'kind', 'personIds', 'reason', 'status'])
+  assert.equal(rej.status, 400)
+  assert.deepEqual(rej.personIds, ['2'])
+  assert.equal(rej.hash, subscriberHash('jane.doe@invalid.example'))
+  assert.match(rej.detail, /looks fake or invalid/)
+  assert.deepEqual(h.lines, [summary(h.lines)])
+  assert.match(summary(h.lines), /^MAILCHIMP OK adds=2 archives=0 subscribed=0 left-out=1 \(.* other=1\) /)
+  // The 300 ms gap still applies around the refused write.
+  const seq = h.events.filter((e) => e.startsWith('PUT') || e.startsWith('sleep')).map((e) => e.split(' ')[0])
+  assert.deepEqual(seq, ['PUT', 'sleep', 'PUT', 'sleep', 'PUT'])
+})
+
+test('add: a refusal detail longer than 200 characters is cut to 200', async () => {
+  const wrap = async (next, url, init) => (init.method === 'PUT' ? answer(400, { title: 'Invalid Resource', detail: 'x'.repeat(500) }) : next(url, init))
+  const h = setup({ persons: [person(1, 'n1@example.org')], wrap, writeAdd: true })
+  assert.equal((await h.run()).outcome, 'ok')
+  const [rec] = h.records()
+  assert.equal(rec.reason, 'rejected')
+  assert.equal(rec.detail.length, 200)
+})
+
+test('add: PUT lands but the read-back is refused (4xx) → write-unconfirmed, status null, run goes on', async () => {
+  const target = subscriberHash('n1@example.org')
+  let put = false
+  const wrap = async (next, url, init) => {
+    if (init.method === 'PUT') { put = true; return next(url, init) }
+    if (put && url.toString().endsWith(`/members/${target}`)) return answer(400, { title: 'Bad Request', detail: 'nope' })
+    return next(url, init)
+  }
+  const h = setup({ persons: threeNew(), wrap, writeAdd: true })
+  const r = await h.run()
+  assert.equal(r.outcome, 'ok')
+  const recs = h.records()
+  assert.deepEqual(recs.map((x) => [x.kind, x.reason ?? null, x.email, x.status]), [
+    ['left-out', 'write-unconfirmed', 'n1@example.org', null],
+    ['added', null, 'n2@example.org', 'subscribed'],
+    ['added', null, 'n3@example.org', 'subscribed'],
+  ])
+  assert.match(summary(h.lines), /adds=2 .*other=1\) /)
+})
+
+test('add: a 500 that exhausts its retries still fails the run, retryable; no later PUT', async () => {
+  const wrap = async (next, url, init) => (init.method === 'PUT' ? answer(500, { title: 'Server Error', detail: 'down' }) : next(url, init))
+  const h = setup({ persons: threeNew(), wrap, writeAdd: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: true, runId: RUN_ID })
+  assert.equal(h.writes().length, 4) // one PUT, tried four times
+  assert.match(h.lines[0], /^MAILCHIMP FAILED Mailchimp PUT .* 500/)
+  assert.deepEqual(h.records(), [])
+})
+
+test('add: 429 and network errors that exhaust retries fail the run, retryable', async () => {
+  const w429 = async (next, url, init) => (init.method === 'PUT' ? answer(429, { title: 'Too Many Requests', detail: 'slow' }) : next(url, init))
+  const h = setup({ persons: threeNew(), wrap: w429, writeAdd: true })
+  assert.deepEqual(await h.run(), { outcome: 'failed', retryable: true, runId: RUN_ID })
+  const wNet = async (next, url, init) => { if (init.method === 'PUT') throw new TypeError('fetch failed'); return next(url, init) }
+  const h2 = setup({ persons: threeNew(), wrap: wNet, writeAdd: true })
+  assert.deepEqual(await h2.run(), { outcome: 'failed', retryable: true, runId: RUN_ID })
+  assert.equal(h2.find('n2@example.org'), undefined)
+})
+
+test('add: PUT lands but the read-back fails with a 500 → recorded write-unconfirmed, then the run fails', async () => {
+  const target = subscriberHash('n1@example.org')
+  let put = false
+  const wrap = async (next, url, init) => {
+    if (init.method === 'PUT') { put = true; return next(url, init) }
+    if (put && url.toString().endsWith(`/members/${target}`)) return answer(503, { title: 'Unavailable', detail: 'down' })
+    return next(url, init)
+  }
+  const h = setup({ persons: threeNew(), wrap, writeAdd: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: true, runId: RUN_ID })
+  assert.deepEqual(h.records().map((x) => [x.kind, x.reason, x.email, x.status]), [['left-out', 'write-unconfirmed', 'n1@example.org', null]])
+  assert.equal(h.writes().length, 1)
+})
+
+test('archive: a 400 on DELETE → archive-skipped with status and detail; the next archive still runs', async () => {
+  const first = subscriberHash('a@example.org')
+  const wrap = async (next, url, init) => {
+    if (init.method === 'DELETE' && url.toString().endsWith(`/members/${first}`)) return answer(400, { title: 'Invalid Resource', detail: 'cannot archive' })
+    return next(url, init)
+  }
+  const h = setup({ persons: [person(1, 'jane@example.org')], members: threeOld(), wrap, writeArchive: true })
+  const r = await h.run()
+  assert.equal(r.outcome, 'ok')
+  assert.equal(h.find('a@example.org').status, 'unsubscribed')
+  assert.equal(h.find('b@example.org').status, 'archived')
+  assert.equal(h.find('c@example.org').status, 'archived')
+  const recs = h.records()
+  assert.deepEqual(recs.map((x) => [x.kind, x.email]), [['archive-skipped', 'a@example.org'], ['archived', 'b@example.org'], ['archived', 'c@example.org']])
+  assert.equal(recs[0].status, 400)
+  assert.equal(recs[0].reason, 'rejected')
+  assert.equal(recs[0].detail, 'cannot archive')
+  assert.match(summary(h.lines), /archives=2 /)
+})
+
+test('archive: a 400 on the read-back after DELETE → archive-skipped with that status; run goes on', async () => {
+  const first = subscriberHash('a@example.org')
+  let deleted = false
+  const wrap = async (next, url, init) => {
+    if (init.method === 'DELETE' && url.toString().endsWith(`/members/${first}`)) { deleted = true; return next(url, init) }
+    if (deleted && (init.method ?? 'GET') === 'GET' && url.toString().endsWith(`/members/${first}`)) return answer(400, { title: 'Bad Request', detail: 'nope' })
+    return next(url, init)
+  }
+  const h = setup({ persons: [person(1, 'jane@example.org')], members: threeOld(), wrap, writeArchive: true })
+  assert.equal((await h.run()).outcome, 'ok')
+  const recs = h.records()
+  assert.deepEqual(recs.map((x) => [x.kind, x.email, x.status]), [['archive-skipped', 'a@example.org', 400], ['archived', 'b@example.org', 'archived'], ['archived', 'c@example.org', 'archived']])
+})
+
+test('archive: a 500 that exhausts retries on DELETE fails the run, retryable', async () => {
+  const wrap = async (next, url, init) => (init.method === 'DELETE' ? answer(500, { title: 'Server Error', detail: 'down' }) : next(url, init))
+  const h = setup({ persons: [person(1, 'jane@example.org')], members: threeOld(), wrap, writeArchive: true })
+  assert.deepEqual(await h.run(), { outcome: 'failed', retryable: true, runId: RUN_ID })
+  assert.equal(h.find('b@example.org').status, 'unsubscribed')
+})
+
+test('R10: an audience whose name differs from MAILCHIMP_LIST_NAME → failed, not retryable, no snapshot, no writes', async () => {
+  const h = setup({ persons: threeNew(), members: threeOld(), cfg: { mailchimp: { listId: 'list1', listName: 'Expected Audience', mock: null } }, writeAdd: true, writeArchive: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: false, runId: RUN_ID })
+  assert.deepEqual(h.lines, ['MAILCHIMP FAILED Mailchimp audience name is "Test List", expected "Expected Audience"'])
+  assert.deepEqual(h.writes(), [])
+  assert.equal(h.files[`out/audience-${RUN_ID}.json`], undefined)
+  assert.ok(!h.events.some((e) => e.endsWith('/members')), 'members not read')
+})
+
+test('R10/R4: a mock with an empty name skips the check; an empty name without a mock still refuses', async () => {
+  const h = setup({ persons: threeNew(), cfg: { mailchimp: { listId: 'list1', listName: '', mock: 'state.json' } }, writeAdd: true })
+  assert.equal((await h.run()).outcome, 'ok')
+  const h2 = setup({ persons: threeNew(), cfg: { mailchimp: { listId: 'list1', listName: '', mock: null } }, writeAdd: true })
+  assert.deepEqual(await h2.run(), { outcome: 'failed', retryable: false, runId: RUN_ID })
+  assert.deepEqual(h2.writes(), [])
 })

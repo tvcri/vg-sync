@@ -67,6 +67,18 @@ test('putMember creates an absent member as subscribed, stamps last_changed and 
   assert.equal(saved[0].members.at(-1).email_address, 'new@example.org')
 })
 
+test('putMember of a new address at invalid.example is refused 400 "looks fake or invalid", nothing saved', async () => {
+  const { mc, saved, s } = setup()
+  const email = 'jane.doe@invalid.example'
+  await assert.rejects(mc.putMember(subscriberHash(email), { email, firstName: 'Jane', lastName: 'Doe' }), (e) => {
+    assert.equal(e.status, 400)
+    assert.match(e.detail, /looks fake or invalid/)
+    return true
+  })
+  assert.equal(s.members.length, 4)
+  assert.equal(saved.length, 0)
+})
+
 test('putMember on an archived member answers 200 and changes nothing', async () => {
   const { mc, saved, s } = setup()
   const r = await mc.putMember(subscriberHash('old@example.org'), { email: 'old@example.org', firstName: 'A', lastName: 'B' })
