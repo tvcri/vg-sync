@@ -12,7 +12,7 @@ const WRITE_GAP_MS = 300
 
 class Stop extends Error {}
 
-// Every read is raced against the run's signal (pattern copied from src/lgl-vg/abort.js createStopper):
+// Every read is raced against the run's signal (pattern copied from the LGL sync's abort helper):
 // a read is abandoned the moment the signal fires. Nothing is lost, since a read writes nothing.
 function makeRead (signal) {
   return (promise) => {

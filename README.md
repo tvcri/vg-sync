@@ -3,7 +3,7 @@
 Scheduled, headless synchronization between Little Green Light, Village Green
 and Mailchimp for Village Common of Rhode Island.
 
-The LGL ↔ VG sync is built; the VG → Mailchimp part is not. A reference to
+The LGL ↔ VG sync is built; the VG → Mailchimp executable is described under "VG → Mailchimp audience" below. A reference to
 every command, option, variable and output line is in
 [`docs/vg-sync.1.md`](docs/vg-sync.1.md). The rules file is described in
 [`docs/policy.json.5.md`](docs/policy.json.5.md). `CLAUDE.md` says where the related
@@ -66,6 +66,20 @@ constituents in `LGL_WRITE_ALLOW` (see "Writing to LGL"). Decisions files go to 
 
 `SIGTERM` or `SIGINT` prints `STOPPING`, stops the running pass between
 writes, prints `STOPPED` and exits 0.
+
+## VG → Mailchimp audience
+
+A second executable, `src/vg-mailchimp/main.js`, shares no code with the LGL
+sync and ships in the same image. Each night it adds VG members, volunteers
+and donors who are not yet in the Mailchimp audience, and archives contacts
+that unsubscribed long ago. It never re-adds a contact whose status is
+anything but absent. Both writes are off until `WRITE_MAILCHIMP_ADD` and
+`WRITE_MAILCHIMP_ARCHIVE` are `true`. `npm run mailchimp` starts the service,
+`npm run mailchimp-once` makes one dry run by hand, and
+`npm run mailchimp-setup` prepares the service account. It has its own
+`.env` and `out` directory (see `deploy/docker-compose.example.yml`). Every
+command, setting, log line and the records format is in
+[`docs/vg-mailchimp.1.md`](docs/vg-mailchimp.1.md).
 
 ## The image
 

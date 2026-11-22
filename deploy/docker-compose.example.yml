@@ -16,3 +16,19 @@ services:
     volumes:
       - ./vg-sync/.env:/app/.env:ro
       - ./vg-sync/out:/app/out
+  mailchimp:
+    # Keep this line in the `repo@sha256:` form: the deployer rewrites it.
+    # It is the same image as `sync`; only the command differs.
+    image: carlsmig/vg-sync@sha256:<digest>  # <commit>
+    command: ["node", "src/vg-mailchimp/main.js"]
+    restart: unless-stopped
+    # A tiny init as PID 1 forwards SIGTERM to node and reaps zombies.
+    init: true
+    stop_grace_period: 30s
+    # The host out directory must exist before the first start and be writable
+    # by uid 1000, as for `sync`, e.g. `install -d -o 1000 -g 1000
+    # vg-mailchimp/out`. This service has its own .env (its own VG client and
+    # Mailchimp key), readable by uid 1000.
+    volumes:
+      - ./vg-mailchimp/.env:/app/.env:ro
+      - ./vg-mailchimp/out:/app/out

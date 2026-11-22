@@ -11,6 +11,9 @@
     "report": "node src/lgl-vg/main.js report",
     "full": "node src/lgl-vg/main.js --once full",
     "setup": "node src/lgl-vg/main.js setup",
-    "harness": "node harness/run.js"
+    "harness": "node harness/run.js",
+    "mailchimp": "node src/vg-mailchimp/main.js",
+    "mailchimp-once": "node src/vg-mailchimp/main.js --once",
+    "mailchimp-setup": "node src/vg-mailchimp/main.js setup"
   }
 }
