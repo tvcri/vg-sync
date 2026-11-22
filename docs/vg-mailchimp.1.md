@@ -35,9 +35,10 @@ A run is: read VG; read the audience; write an audience snapshot (when a
 write switch is on); archive; re-read the billable count; classify; add;
 report. A run fails closed: each write is read back, and counted only if it
 took. 300 ms pass between Mailchimp writes. A contact Mailchimp refuses (a
-4xx other than 401, such as an address it judges fake) is recorded and the
-run goes on; a 401, or a 429, 5xx or network error that outlasts the
-retries, fails the run.
+4xx other than 401 or 403, such as an address it judges fake) is recorded
+and the run goes on. A 401 or 403 (a bad key, a key without access, a
+suspended account) fails the run and is not retried. A 429, 5xx or network
+error that outlasts the retries fails the run.
 
 ## MODES
 

@@ -72,7 +72,9 @@ export function createMailchimpClient({
       const err = new Error(`Mailchimp ${method} ${path} → ${res.status}: ${parsed?.title ?? 'Request failed'}: ${detail}`)
       err.status = res.status
       err.detail = detail
-      if (res.status === 401) err.final = true
+      // 401 (bad key) and 403 (key without access, account suspended) say the account is unusable, not
+      // one contact: final, never retried.
+      if (res.status === 401 || res.status === 403) err.final = true
       throw err
     }
   }

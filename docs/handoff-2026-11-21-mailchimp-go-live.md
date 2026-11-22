@@ -45,8 +45,9 @@ old unsubscribed and 1 subscribed that are not in VG.
   rehearsal ran through a scratch wrapper. `main.js` now defaults `sleep` for
   every command, with a test through the real entry path.
 - **Fixed in the final review:** a contact Mailchimp refuses (a 4xx other
-  than 401) is now recorded (`rejected`, with the HTTP status and detail) and
-  the run goes on, instead of failing every night; a 401, or a 429, 5xx or
+  than 401 or 403) is now recorded (`rejected`, with the HTTP status and detail) and
+  the run goes on, instead of failing every night; a 401 or 403 fails the
+  run without retries (a 403 is the key or account, not the contact); a 429, 5xx or
   network error after retries, still fails the run. A landed write whose
   read-back fails is now recorded.
 - **Fixed in the final review:** the audience-name check now runs in every

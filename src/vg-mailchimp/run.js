@@ -3,7 +3,7 @@
 // Read VG, build candidates; read the audience; snapshot (only when a write switch is on); archive
 // (re-read before, read back after); re-read billable; classify; add (billing guard, then cap; read
 // back after each PUT); report. The records file is written once, at the end, also on failure and stop.
-// A contact Mailchimp refuses (a 4xx other than 401) is recorded and the run goes on; see endsRun.
+// A contact Mailchimp refuses (a 4xx other than 401 or 403) is recorded and the run goes on; see endsRun.
 
 import { buildCandidates } from './cohort.js'
 import { subscriberHash } from './mailchimp.js'
@@ -13,11 +13,11 @@ const WRITE_GAP_MS = 300
 
 class Stop extends Error {}
 
-// An error that ends the run rather than the one contact: a stop, a refused sign-in (401) or anything marked
-// final, and anything that says Mailchimp itself is unwell (429, 5xx or a network error, after the client's
+// An error that ends the run rather than the one contact: a stop, a refused key or account (401, 403) or
+// anything marked final, and anything that says Mailchimp itself is unwell (429, 5xx or a network error, after the client's
 // retries). Any other 4xx is Mailchimp refusing this one contact: it is recorded and the run goes on.
 const endsRun = (err) => err instanceof Stop || err?.final || typeof err?.status !== 'number' ||
-  err.status < 400 || err.status === 401 || err.status === 429 || err.status >= 500
+  err.status < 400 || err.status === 401 || err.status === 403 || err.status === 429 || err.status >= 500
 const detailOf = (err) => String(err?.detail ?? err?.message ?? '').slice(0, 200)
 
 // Every read is raced against the run's signal (pattern copied from the LGL sync's abort helper):

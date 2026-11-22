@@ -531,3 +531,32 @@ test('R10/R4: a mock with an empty name skips the check; an empty name without a
   assert.deepEqual(await h2.run(), { outcome: 'failed', retryable: false, runId: RUN_ID })
   assert.deepEqual(h2.writes(), [])
 })
+
+test('403 on an add (key or account refused) → FAILED, not retryable, no further writes', async () => {
+  let puts = 0
+  const wrap = async (next, url, init) => {
+    if (init.method === 'PUT') { puts++; return answer(403, { title: 'Forbidden', detail: 'no access' }) }
+    return next(url, init)
+  }
+  const h = setup({ persons: threeNew(), wrap, writeAdd: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: false, runId: RUN_ID })
+  assert.equal(puts, 1)
+  assert.equal(h.lines.length, 1)
+  assert.match(h.lines[0], /^MAILCHIMP FAILED Mailchimp PUT .* 403/)
+  assert.ok(!h.records().some((x) => x.reason === 'rejected'))
+})
+
+test('403 on an archive → FAILED, not retryable, not recorded as archive-skipped', async () => {
+  let deletes = 0
+  const wrap = async (next, url, init) => {
+    if (init.method === 'DELETE') { deletes++; return answer(403, { title: 'Forbidden', detail: 'no access' }) }
+    return next(url, init)
+  }
+  const h = setup({ persons: [person(1, 'jane@example.org')], members: threeOld(), wrap, writeArchive: true })
+  const r = await h.run()
+  assert.deepEqual(r, { outcome: 'failed', retryable: false, runId: RUN_ID })
+  assert.equal(deletes, 1)
+  assert.match(h.lines[0], /^MAILCHIMP FAILED Mailchimp DELETE .* 403/)
+  assert.ok(!h.records().some((x) => x.reason === 'archive-skipped'))
+})

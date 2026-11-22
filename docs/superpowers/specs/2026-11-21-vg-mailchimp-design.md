@@ -268,7 +268,7 @@ differ so that each alert matches one service:
 - `MAILCHIMP FAILED <reason>`, `MAILCHIMP LIMIT ...`, `MAILCHIMP CAP ...`,
   `STARTUP ...`, `STOPPING`, `STOPPED`.
 - A failed run is retried an hour later, up to three times, then waits for
-  the next night. A refused sign-in (Keycloak 401, Mailchimp 401) and a
+  the next night. A refused sign-in (Keycloak 401, Mailchimp 401 or 403) and a
   `MIN_COHORT` failure are not retried. **(call, as vg-sync)**
 - `SIGTERM` stops between writes, never during one.
 - Every Mailchimp and VG request has a timeout. A 429 or 5xx is retried

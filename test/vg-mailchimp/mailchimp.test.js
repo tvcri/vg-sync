@@ -119,6 +119,12 @@ test('401 is final and not retried', async () => {
   assert.equal(calls.length, 1)
 })
 
+test('403 is final and not retried', async () => {
+  const { client, calls } = setup([json(403, { title: 'Forbidden', detail: 'no access' })])
+  await assert.rejects(client.getList(), (e) => e.status === 403 && e.final === true)
+  assert.equal(calls.length, 1)
+})
+
 test('source never mentions delete-permanent', () => {
   assert.ok(!readFileSync('src/vg-mailchimp/mailchimp.js', 'utf8').includes('delete-permanent'))
 })
