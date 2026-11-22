@@ -171,3 +171,12 @@ test('service mode: a config error prints STARTUP FAILED and returns 1', async (
   assert.equal(await run([], h.deps), 1)
   assert.deepEqual(h.out, ['STARTUP FAILED Missing environment variables: VG_CLIENT_SECRET'])
 })
+
+test('--once --write-add works with no sleep injected (the entry point passes none of its own)', async () => {
+  const h = harness()
+  delete h.deps.sleep
+  assert.equal(await run(['--once', '--write-add'], h.deps), 0)
+  assert.equal(h.state().members.length, 2)
+  assert.ok(h.state().members.every((m) => m.status === 'subscribed'))
+  assert.ok(!h.out.some((l) => l.startsWith('MAILCHIMP FAILED')), h.out.join('\n'))
+})

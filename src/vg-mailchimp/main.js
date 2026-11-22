@@ -203,7 +203,12 @@ async function service({
   return finished
 }
 
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
 export async function run(argv, deps) {
+  // The one default: every command gets a real sleep unless the caller injects one (the 300 ms gap
+  // between Mailchimp writes calls it).
+  deps = { ...deps, sleep: deps.sleep ?? realSleep }
   if (argv.length === 0) return service(deps)
   if (argv[0] === '--once') return once(argv.slice(1), deps)
   if (argv[0] === 'setup') return setup(argv.slice(1), deps)
@@ -228,6 +233,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     env: process.env,
     fetchImpl: fetch,
     now: Date.now,
+    sleep: realSleep,
     onSignal: (name, fn) => process.on(name, fn),
     // The service's lines carry their time; a command run by hand prints as it always has.
     stdout: envArgs.rest.length === 0 ? stamped((t) => console.log(t), Date.now) : (t) => console.log(t),
