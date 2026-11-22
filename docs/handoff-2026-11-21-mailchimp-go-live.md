@@ -39,20 +39,22 @@ old unsubscribed and 1 subscribed that are not in VG.
 
 ### What differed
 
-- **A bug in `--once` (not fixed here).** Run by hand, `node
-  src/vg-mailchimp/main.js --once --write-add --write-archive` fails at the
-  second write with `MAILCHIMP FAILED sleep is not a function`. The entry
-  point in `main.js` passes no `sleep`, `once()` does not default it, and
-  `runOnce` calls `sleep(WRITE_GAP_MS)` between writes. A dry run is
-  unaffected, and so is the service (it defaults `sleep` itself). It blocks
-  the by-hand first archive and add. The rehearsal ran through a scratch
-  wrapper that supplies `sleep`. **Fix before the by-hand runs:** default
-  `sleep` in `once()` (or pass it from the entry point), and add a test that
-  a `--once` write run with two or more writes passes through the real entry
-  path.
+- **A bug in `--once`, since fixed (3be4f44).** Run by hand, `--once
+  --write-add --write-archive` failed at the second write with `MAILCHIMP
+  FAILED sleep is not a function`: the entry point passed no `sleep`. The
+  rehearsal ran through a scratch wrapper. `main.js` now defaults `sleep` for
+  every command, with a test through the real entry path.
+- **Fixed in the final review:** a contact Mailchimp refuses (a 4xx other
+  than 401) is now recorded (`rejected`, with the HTTP status and detail) and
+  the run goes on, instead of failing every night; a 401, or a 429, 5xx or
+  network error after retries, still fails the run. A landed write whose
+  read-back fails is now recorded.
+- **Fixed in the final review:** the audience-name check now runs in every
+  run, `--once` included, before any snapshot or write (ruling R10); the
+  service keeps its start-up check too.
 - The mock reports an empty audience name, so the start-up line reads
-  `Mailchimp audience  reached` and the name check is not exercised (ruling
-  R4). A wrong name is only caught against the real audience.
+  `Mailchimp audience  reached` and the name check, at start and in each
+  run, is not exercised (ruling R4). A wrong name is only caught against the real audience.
 - The role was not exercised: role 9 is only on the village-green branch
   `mailchimp-sync-role`.
 
@@ -91,8 +93,7 @@ engineer's explicit go-ahead.
 4. **Create the alerts**, disabled first: `vg-mailchimp-failed` (`MAILCHIMP
    FAILED`, `STARTUP FAILED`, `MAILCHIMP LIMIT`, `MAILCHIMP CAP`) and
    `vg-mailchimp-silent` (under one `MAILCHIMP ALIVE` in 15 minutes).
-5. **The first archive by hand,** after the `--once` bug above is fixed and a
-   reviewed dry run: `--once --write-archive --max-archive <reviewed
+5. **The first archive by hand,** after a reviewed dry run: `--once --write-archive --max-archive <reviewed
    count>`, then `--write-add` the same way.
 
 ## Deferred minors from the build ledger
@@ -100,8 +101,7 @@ engineer's explicit go-ahead.
 Full list: `.superpowers/sdd/2026-11-21-vg-mailchimp/progress.md` (local, not
 in the repo). In short:
 
-- Run: a landed write whose read-back fails leaves no record; the archive
-  re-read comes before the 300 ms gap; a `MIN_COHORT` failure writes an empty
+- Run: the archive re-read comes before the 300 ms gap; a `MIN_COHORT` failure writes an empty
   records file; a non-Error throw prints "undefined"; no test for a stop
   during the archive read-back.
 - Client: the response body is read outside the retry `try`; `Retry-After` is

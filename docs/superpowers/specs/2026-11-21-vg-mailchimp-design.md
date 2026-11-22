@@ -201,7 +201,7 @@ shipped.
 | Field | |
 |---|---|
 | `kind` | `left-out`, `added`, `archived`, `archive-skipped` |
-| `reason` | for `left-out`: `no-email`, `invalid-email`, `unsubscribed`, `cleaned`, `archived`, `limit`, `cap`, `write-unconfirmed`, or another Mailchimp status; for `archive-skipped`: the status found |
+| `reason` | for `left-out`: `no-email`, `invalid-email`, `unsubscribed`, `cleaned`, `archived`, `limit`, `cap`, `write-unconfirmed`, `rejected` (Mailchimp refused the add with a 4xx), or another Mailchimp status; for `archive-skipped`: the status found, or `rejected` |
 | `personIds` | VG person ids behind the address (empty for an archive) |
 | `email` | the address |
 | `hash` | the subscriber hash |

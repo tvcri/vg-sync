@@ -26,13 +26,18 @@ address become one candidate. It then reads the Mailchimp audience, and:
 It never re-adds or resubscribes a contact whose status is anything but
 absent (`unsubscribed`, `cleaned`, `pending`, `archived` and the rest are
 recorded and left alone). It sends no tags, and it never deletes a contact
-for good. It changes only the audience named by `MAILCHIMP_LIST_ID`, and
-refuses to start if that audience's name is not `MAILCHIMP_LIST_NAME`.
+for good. It changes only the audience named by `MAILCHIMP_LIST_ID`. Every
+run, the service's and `--once` alike, refuses an audience whose name is not
+`MAILCHIMP_LIST_NAME` before it writes anything; the service also refuses to
+start.
 
 A run is: read VG; read the audience; write an audience snapshot (when a
 write switch is on); archive; re-read the billable count; classify; add;
 report. A run fails closed: each write is read back, and counted only if it
-took. 300 ms pass between Mailchimp writes.
+took. 300 ms pass between Mailchimp writes. A contact Mailchimp refuses (a
+4xx other than 401, such as an address it judges fake) is recorded and the
+run goes on; a 401, or a 429, 5xx or network error that outlasts the
+retries, fails the run.
 
 ## MODES
 
@@ -123,11 +128,12 @@ UTC). Commands run by hand print without a time.
 | Field | Meaning |
 |---|---|
 | `kind` | `left-out`, `added`, `archived`, `archive-skipped` |
-| `reason` | For `left-out`: `no-email`, `invalid-email`, `unsubscribed`, `cleaned`, `archived`, `limit`, `cap`, `write-unconfirmed`, or another Mailchimp status. For `archive-skipped`: the status found. |
+| `reason` | For `left-out`: `no-email`, `invalid-email`, `unsubscribed`, `cleaned`, `archived`, `limit`, `cap`, `write-unconfirmed`, `rejected` (Mailchimp refused the add), or another Mailchimp status. For `archive-skipped`: the status found, `rejected` (Mailchimp refused the archive), or none when a landed archive could not be read back. `rejected` counts under `other` in the summary line. |
 | `personIds` | VG person ids behind the address (empty for an archive) |
 | `email` | The address |
 | `hash` | The subscriber hash (MD5 of the lowercased address) |
-| `status` | The Mailchimp status read, when there is one |
+| `status` | The Mailchimp status read, when there is one; for a refusal, the HTTP status (a number) |
+| `detail` | For a refusal or a failed read-back: Mailchimp's explanation, at most 200 characters |
 | `at` | ISO time |
 
 A person whose address is already subscribed gets no line.
@@ -164,8 +170,10 @@ A person whose address is already subscribed gets no line.
   billable count (`member_count` + `unsubscribe_count`).
 - **Re-read**: a contact is archived only if it still reads `unsubscribed`
   just before; every write is read back and counted only if it took.
-- **Audience name**: start refuses if the audience's name is not
-  `MAILCHIMP_LIST_NAME`.
+- **Audience name**: every run (the service's and `--once`) refuses, before
+  any snapshot or write, if the audience's name is not `MAILCHIMP_LIST_NAME`;
+  the service also refuses to start. Not retried. A mock with an empty name
+  skips the check.
 
 ## EXAMPLES
 
