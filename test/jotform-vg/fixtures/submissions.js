@@ -1,7 +1,7 @@
 // Invented submissions in the JotForm API shape. No real people.
 export const OUTING = 'Outing (\xa0events, movies, Sr Center,\xa0 etc.)'
 
-export const villagesByName = new Map([['Aquidneck Island', '7'], ['Bristol', '8']])
+export const villagesByName = new Map([['Maple Hollow', '41'], ['Cedar Point', '42']])
 
 export function submission(overrides = {}) {
   const { answers = {}, ...rest } = overrides
@@ -17,7 +17,7 @@ export function submission(overrides = {}) {
       5: { answer: '45' },
       6: { answer: 'Phone call' },
       8: { answer: 'Chatted about the garden.' },
-      10: { answer: 'Aquidneck Island' },
+      10: { answer: 'Maple Hollow' },
       13: { answer: { datetime: '2026-11-01 00:00:00' } },
       21: { answer: ['Pet visit', 'Dining out'] },
       23: { answer: 'jane.doe@example.org' },

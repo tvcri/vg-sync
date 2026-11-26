@@ -51,6 +51,7 @@ export function createVgClient({ apiUrl, oidcUrl, clientId, clientSecret, scope,
       const text = await res.text()
       throw httpError(`Keycloak token request → ${res.status}: ${text.slice(0, 200)}`, res.status, {
         final: isRefusedSignIn(res.status, text),
+        token: true,
       })
     }
     const body = await res.json()

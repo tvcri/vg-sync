@@ -7,11 +7,11 @@ import { submission } from './fixtures/submissions.js'
 
 // Invented people only.
 const persons = [
-  { personId: 101, detail: { firstName: 'Jane', lastName: 'Doe' }, email: 'jane.doe@example.org', village: { villageId: 7 }, memberStatus: null, volunteerStatus: 'Active' },
-  { personId: 102, detail: { firstName: 'John', lastName: 'Roe' }, email: null, village: { villageId: 7 }, memberStatus: 'Active', volunteerStatus: null },
-  { personId: 103, detail: { firstName: 'Mary', lastName: 'Major' }, email: null, village: { villageId: 7 }, memberStatus: 'Active', volunteerStatus: null }
+  { personId: 101, detail: { firstName: 'Jane', lastName: 'Doe' }, email: 'jane.doe@example.org', village: { villageId: 41 }, memberStatus: null, volunteerStatus: 'Active' },
+  { personId: 102, detail: { firstName: 'John', lastName: 'Roe' }, email: null, village: { villageId: 41 }, memberStatus: 'Active', volunteerStatus: null },
+  { personId: 103, detail: { firstName: 'Mary', lastName: 'Major' }, email: null, village: { villageId: 41 }, memberStatus: 'Active', volunteerStatus: null }
 ]
-const villages = [{ villageId: 7, name: 'Aquidneck Island' }, { villageId: 8, name: 'Bristol' }]
+const villages = [{ villageId: 41, name: 'Maple Hollow' }, { villageId: 42, name: 'Cedar Point' }]
 const config = (o = {}) => ({ writeVg: true, overlapMinutes: 120, minFullPercent: 90, dateAheadDays: 1, dateBehindDays: 90, ...o })
 
 const sid = (n) => `50000000000000000${String(n).padStart(2, '0')}`
@@ -80,7 +80,7 @@ async function pass (kind, jotform, vg, cfg = config()) {
 // A row as the July prototype left it: matched persons, no typed names, no match columns, never edited.
 function legacy (n) {
   return {
-    id: sid(n), submittedAt: `2026-11-${String(n).padStart(2, '0')} 09:30:00`, jotformUpdatedAt: null, villageId: '7', villageName: 'Aquidneck Island',
+    id: sid(n), submittedAt: `2026-11-${String(n).padStart(2, '0')} 09:30:00`, jotformUpdatedAt: null, villageId: '41', villageName: 'Maple Hollow',
     volunteerPersonId: '101', rawVolunteerName: null, volunteerFirst: null, volunteerLast: null, volunteerEmail: null,
     memberPersonId: '102', rawMemberName: null, memberFirst: null, memberLast: null, visitDate: '2026-11-01',
     timeSpentMinutes: 45, contactType: 'Phone call', activityTypes: null, activityOther: null, notes: 'Old.', reportingTag: null,
@@ -212,7 +212,7 @@ test('a held name is released by a remembered answer on the next change pass', a
   const first = await pass('full', jf, vg)
   assert.equal(first.counts.held.name, 1)
   assert.equal(vg.db.get(sid(1)).held, 'name')
-  assert.deepEqual(vg.calls.holds[0].map((h) => [h.kind, h.role, h.nameKey, h.villageId]), [['name', 'member', 'pat smith', '7']])
+  assert.deepEqual(vg.calls.holds[0].map((h) => [h.kind, h.role, h.nameKey, h.villageId]), [['name', 'member', 'pat smith', '41']])
   reset(vg)
 
   // No answer yet: the held row is re-decided from storage, unchanged, and its hold is sent again.
@@ -221,7 +221,7 @@ test('a held name is released by a remembered answer on the next change pass', a
   assert.equal(vg.calls.holds[0].length, 1)
   reset(vg)
 
-  vg.nameMatches.push({ role: 'member', nameKey: 'pat smith', villageId: '7', personId: '103', ignore: false })
+  vg.nameMatches.push({ role: 'member', nameKey: 'pat smith', villageId: '41', personId: '103', ignore: false })
   const { counts } = await pass('change', jf, vg)
   assert.equal(counts.fetched, 1) // #1 is outside the window: re-matched from storage
   assert.deepEqual(vg.calls.put, [sid(1)])
@@ -238,7 +238,7 @@ test('a remembered answer reaches a counting report stored outside the window', 
   const vg = fakeVg()
   await pass('full', jf, vg)
   reset(vg)
-  vg.nameMatches.push({ role: 'member', nameKey: 'john roe', villageId: '7', personId: '103', ignore: false })
+  vg.nameMatches.push({ role: 'member', nameKey: 'john roe', villageId: '41', personId: '103', ignore: false })
   await pass('change', jf, vg)
   assert.deepEqual(vg.calls.put.sort(), [sid(1), sid(20)])
   assert.equal(vg.db.get(sid(1)).memberPersonId, '103')
@@ -249,7 +249,7 @@ test('a newcomer with the same name does not pull an unedited counting report ba
   const vg = fakeVg()
   await pass('full', jf, vg)
   reset(vg)
-  vg.people.push({ personId: 104, detail: { firstName: 'John', lastName: 'Roe' }, email: null, village: { villageId: 7 }, memberStatus: 'Active', volunteerStatus: null })
+  vg.people.push({ personId: 104, detail: { firstName: 'John', lastName: 'Roe' }, email: null, village: { villageId: 41 }, memberStatus: 'Active', volunteerStatus: null })
   const { counts } = await pass('full', jf, vg)
   assert.deepEqual(vg.calls.put, [])
   assert.equal(counts.held.name, 0)
@@ -283,6 +283,27 @@ test('a 422 on one PUT does not stop the others or the holds write', async () =>
   assert.deepEqual(vg.calls.holds[0].map((h) => h.kind), ['unreadable'])
   assert.match(lines[0], / failed=1 /)
   assert.doesNotMatch(lines[0], /5000000000/)
+})
+
+for (const status of [400, 413]) {
+  test(`a ${status} on one PUT does not stop the others or the holds write`, async () => {
+    const jf = jotformOver({ submissions: [sub(1), sub(2, { answers: { 6: { answer: '' } } }), sub(3)] })
+    const vg = fakeVg({ failPut: (id) => (id === sid(1) ? Object.assign(new Error(`VG PUT → ${status}`), { status }) : null) })
+    const { counts, lines } = await pass('full', jf, vg)
+    assert.equal(counts.failed, 1)
+    assert.equal(counts.inserted, 2)
+    assert.deepEqual(vg.calls.put, [sid(1), sid(2), sid(3)])
+    assert.equal(vg.calls.holds.length, 1)
+    assert.deepEqual(vg.calls.holds[0].map((h) => h.kind), ['unreadable'])
+    assert.match(lines[0], / failed=1 /)
+  })
+}
+
+test('a 400 from the token request during a PUT ends the pass', async () => {
+  const jf = jotformOver({ submissions: [sub(1), sub(2)] })
+  const vg = fakeVg({ failPut: () => Object.assign(new Error('Keycloak token request → 400'), { status: 400, token: true }) })
+  await assert.rejects(pass('full', jf, vg), /token request/)
+  assert.deepEqual(vg.calls.holds, [])
 })
 
 test('any other VG error on a PUT ends the pass', async () => {
@@ -319,7 +340,7 @@ test('a staff date decision stays with the report through a re-parse', async () 
   assert.deepEqual(vg.calls.holds, [[]])
 })
 
-const newcomer = { personId: 104, detail: { firstName: 'John', lastName: 'Roe' }, email: null, village: { villageId: 7 }, memberStatus: 'Active', volunteerStatus: null }
+const newcomer = { personId: 104, detail: { firstName: 'John', lastName: 'Roe' }, email: null, village: { villageId: 41 }, memberStatus: 'Active', volunteerStatus: null }
 const err = (status) => Object.assign(new Error(`VG → ${status}`), { status })
 
 test('an edited report is re-matched fresh: a newcomer with the same name now holds it', async () => {
@@ -354,7 +375,7 @@ test('an ignore answer overrides a kept person', async () => {
   const vg = fakeVg()
   await pass('full', jf, vg)
   reset(vg)
-  vg.nameMatches.push({ role: 'member', nameKey: 'john roe', villageId: '7', personId: null, ignore: true })
+  vg.nameMatches.push({ role: 'member', nameKey: 'john roe', villageId: '41', personId: null, ignore: true })
   const { counts } = await pass('full', jf, vg)
   assert.equal(counts.held.ignored, 1)
   assert.equal(vg.db.get(sid(1)).held, 'ignored')
@@ -379,21 +400,23 @@ test('writes go oldest first, so a failed write is not left behind the cursor', 
   assert.deepEqual(vg.calls.put, [sid(12), sid(10)])
 })
 
-test('a refused update keeps the hold of the row VG still holds', async () => {
-  const state = { submissions: [sub(1, { answers: member('Pat', 'Smith') })] }
-  const jf = jotformOver(state)
-  const vg = fakeVg()
-  await pass('full', jf, vg)
-  reset(vg)
-  // Edited to a known member, but VG refuses the write: VG still holds the row for the name.
-  state.submissions[0] = sub(1, { updated_at: '2026-11-04 08:00:00' })
-  vg.setFailPut(() => err(422))
-  const { counts } = await pass('full', jf, vg)
-  assert.equal(counts.failed, 1)
-  assert.equal(counts.updated, 0)
-  assert.equal(counts.held.name, 1)
-  assert.deepEqual(vg.calls.holds[0].map((h) => [h.kind, h.nameKey]), [['name', 'pat smith']])
-})
+for (const status of [400, 413, 422]) {
+  test(`a refused update (${status}) keeps the hold of the row VG still holds`, async () => {
+    const state = { submissions: [sub(1, { answers: member('Pat', 'Smith') })] }
+    const jf = jotformOver(state)
+    const vg = fakeVg()
+    await pass('full', jf, vg)
+    reset(vg)
+    // Edited to a known member, but VG refuses the write: VG still holds the row for the name.
+    state.submissions[0] = sub(1, { updated_at: '2026-11-04 08:00:00' })
+    vg.setFailPut(() => err(status))
+    const { counts } = await pass('full', jf, vg)
+    assert.equal(counts.failed, 1)
+    assert.equal(counts.updated, 0)
+    assert.equal(counts.held.name, 1)
+    assert.deepEqual(vg.calls.holds[0].map((h) => [h.kind, h.nameKey]), [['name', 'pat smith']])
+  })
+}
 
 test('a refused update of a legacy row sends no hold for it', async () => {
   const jf = jotformOver({ submissions: [sub(1, { answers: member('Pat', 'Smith') })] })

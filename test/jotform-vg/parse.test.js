@@ -10,8 +10,8 @@ test('a complete submission parses every field', () => {
     id: '5000000000000000001',
     submittedAt: '2026-11-02 09:30:00',
     jotformUpdatedAt: '2026-11-03 10:00:00',
-    villageId: '7',
-    villageName: 'Aquidneck Island',
+    villageId: '41',
+    villageName: 'Maple Hollow',
     volunteer: { first: 'Jane', last: 'Doe', raw: 'Jane Doe' },
     member: { first: 'John', last: 'Roe', raw: 'John Roe' },
     volunteerEmail: 'jane.doe@example.org',
@@ -42,9 +42,9 @@ test('the Outing option with non-breaking spaces maps', () => {
 })
 
 test('village lookup is exact after trimming; unknown is unreadable', () => {
-  const ok = parse({ answers: { 10: { answer: '  Bristol ' } } })
-  assert.equal(ok.villageId, '8')
-  assert.equal(ok.villageName, 'Bristol')
+  const ok = parse({ answers: { 10: { answer: '  Cedar Point ' } } })
+  assert.equal(ok.villageId, '42')
+  assert.equal(ok.villageName, 'Cedar Point')
   const bad = parse({ answers: { 10: { answer: 'Atlantis' } } })
   assert.equal(bad.unreadable, 'village')
   assert.equal(bad.villageId, null)
@@ -106,9 +106,11 @@ test('values over VG column limits are trimmed', () => {
       6: { answer: long(80) },
       10: { answer: long(300) },
       21: { answer: { other: long(600) } },
+      8: { answer: long(20000) },
       23: { answer: long(300) }
     }
   })
+  assert.equal(p.notes.length, 16000)
   assert.equal(p.activityOther.length, 500)
   assert.equal(p.volunteer.first.length, LIMITS.namePart)
   assert.equal(p.volunteer.last.length, 100)
@@ -117,7 +119,7 @@ test('values over VG column limits are trimmed', () => {
   assert.equal(p.volunteerEmail.length, 254)
   assert.equal(p.contactType.length, 50)
   assert.equal(p.villageName.length, 200)
-  assert.deepEqual(LIMITS, { activityOther: 500, namePart: 100, rawName: 200, volunteerEmail: 254, contactType: 50, villageName: 200 })
+  assert.deepEqual(LIMITS, { activityOther: 500, namePart: 100, rawName: 200, volunteerEmail: 254, contactType: 50, villageName: 200, notes: 16000 })
 })
 
 test('notes pass through; empty notes are null', () => {

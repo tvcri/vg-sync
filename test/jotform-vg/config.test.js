@@ -33,6 +33,8 @@ test('bad values are refused', () => {
   assert.throws(() => loadConfig({ ...base, MIN_FULL_PERCENT: '101' }), /at most 100/)
   assert.throws(() => loadConfig({ ...base, MIN_FULL_PERCENT: '0' }), /positive/)
   assert.throws(() => loadConfig({ ...base, CHANGE_EVERY_MINUTES: '0' }), /positive/)
+  assert.throws(() => loadConfig({ ...base, CHANGE_EVERY_MINUTES: '1441' }), /CHANGE_EVERY_MINUTES must be at most 1440/)
+  assert.equal(loadConfig({ ...base, CHANGE_EVERY_MINUTES: '1440' }).changeEveryMinutes, 1440)
   assert.throws(() => loadConfig({ ...base, FULL_RUN_UTC: '8:00' }), /HH:MM/)
   assert.throws(() => loadConfig({ ...base, RUN_TIMEOUT_MINUTES: '1441' }), /at most 1440/)
   assert.throws(() => loadConfig({ ...base, VG_API_URL: 'http://vg.example.org' }), /https/)

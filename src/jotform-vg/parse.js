@@ -12,7 +12,9 @@ export const LIMITS = {
   rawName: 200,
   volunteerEmail: 254,
   contactType: 50,
-  villageName: 200
+  villageName: 200,
+  // Stays under MySQL TEXT's 65,535 bytes even at four bytes a character (utf8mb4).
+  notes: 16000
 }
 
 // Exact JotForm option text, including the non-breaking spaces in the Outing option.
@@ -107,7 +109,7 @@ export function parseSubmission(sub, villagesByName) {
     contactType,
     activityTypes: mapActivityTypes(a[21]?.answer),
     activityOther: typeof activityOther === 'string' ? (text(activityOther, LIMITS.activityOther)) : null,
-    notes: text(a[8]?.answer),
+    notes: text(a[8]?.answer, LIMITS.notes),
     reportingTag: dateAnswer(a[13]?.answer),
     unreadable
   }

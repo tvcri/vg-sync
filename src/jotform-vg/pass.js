@@ -165,15 +165,16 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
     wrote: Boolean(config.writeVg)
   }
 
-  // 5. Writes, in order: rows, deletions, holds. A 422 on one row (VG refuses a person or village) is
-  // counted and skipped; any other error ends the pass.
+  // 5. Writes, in order: rows, deletions, holds. A 400, 413 or 422 on one row (VG refuses the row's
+  // shape, size, person or village) is counted and skipped; any other error ends the pass. Skipping
+  // matters: PUTs go oldest first, so a row that ended the pass would end every later pass too.
   const failed = new Set()
   if (config.writeVg) {
     for (const d of puts) {
       try {
         await vg.putSubmission(d.row.id, d.row)
       } catch (err) {
-        if (err?.status !== 422) throw err
+        if (err?.token || !ROW_REFUSED.includes(err?.status)) throw err
         counts.failed++
         failed.add(d)
         continue
@@ -207,6 +208,10 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
   stdout(formatPassLine(counts))
   return counts
 }
+
+// VG statuses that refuse one row, not the pass: 400 (fails the OpenAPI schema), 413 (too large),
+// 422 (a dangling person or village). A Keycloak token error (err.token) is never a row's fault.
+const ROW_REFUSED = [400, 413, 422]
 
 export function formatPassLine (c) {
   return `JOTFORM OK ${c.kind} fetched=${c.fetched} inserted=${c.inserted} updated=${c.updated} unchanged=${c.unchanged} ` +

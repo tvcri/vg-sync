@@ -63,6 +63,7 @@ test('a refused sign-in is final', async () => {
   await assert.rejects(make([{ status: 401, body: 'invalid_client' }]).whoAmI(), (e) => e.status === 401 && e.final === true)
   await assert.rejects(make([{ status: 400, body: '{"error":"invalid_client"}' }]).whoAmI(), (e) => e.final === true)
   await assert.rejects(make([{ status: 500, body: 'boom' }]).whoAmI(), (e) => e.final === false)
+  await assert.rejects(make([{ status: 400, body: '{"error":"invalid_scope"}' }]).whoAmI(), (e) => e.status === 400 && e.token === true && e.final === false)
 })
 
 test('a 403 mentions the role grant, the privacy acknowledgement and the scope', async () => {

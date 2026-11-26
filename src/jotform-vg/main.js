@@ -43,7 +43,7 @@ export const stamped = (write, now) => (t) =>
 // The JotForm reader for a command: the real API, or with JOTFORM_MOCK the state file. A mock run says so.
 async function jotformFor(config, deps, stdout) {
   const jotform = await openJotform(config, { fetchImpl: deps.fetchImpl ?? fetch, readFile: deps.readFile, writeFile: deps.writeFile })
-  if (config.jotform.mock) stdout(`JOTFORM MOCK ${config.jotform.mock}: no request reaches JotForm; writes change this file`)
+  if (config.jotform.mock) stdout(`JOTFORM MOCK ${config.jotform.mock}: no request reaches JotForm; submissions are read from this file`)
   return jotform
 }
 

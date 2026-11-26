@@ -84,7 +84,8 @@ export function loadConfig(env = process.env) {
       scope: present(env.VG_SCOPE) ? String(env.VG_SCOPE).trim() : 'vg',
     },
     writeVg: String(env.WRITE_VG ?? '').trim() === 'true',
-    changeEveryMinutes: toPositive(env, 'CHANGE_EVERY_MINUTES', 5),
+    // Capped at a day, like RUN_TIMEOUT_MINUTES: a larger interval would overflow Node's timer.
+    changeEveryMinutes: toBounded(env, 'CHANGE_EVERY_MINUTES', 5, 1440),
     fullRunUtc: toClock(env, 'FULL_RUN_UTC', '08:00'),
     // At least an hour: the window must cover the hour repeated when clocks fall back.
     overlapMinutes: toAtLeast(env, 'OVERLAP_MINUTES', 120, 60),
