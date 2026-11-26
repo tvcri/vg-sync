@@ -49,9 +49,10 @@ export function describeError(err) {
   if (/^Keycloak token response has no /.test(msg)) return msg
   if (/^JotForm submissions response had no content list$/.test(msg)) return msg
   if (err?.status) return `HTTP ${err.status}`
-  if (err instanceof TypeError || err?.code || err?.name === 'TimeoutError') {
-    return `network error: ${msg.slice(0, 100)}`
-  }
+  const code = err?.code ?? err?.cause?.code
+  if (/^(ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_\w+)$/.test(code ?? '')) return `network error: ${code}`
+  if (err instanceof TypeError && msg === 'fetch failed') return 'network error: fetch failed'
+  if (err?.name === 'TimeoutError') return 'network error: timed out'
   return `unexpected ${err?.name ?? 'error'}`
 }
 
@@ -76,7 +77,7 @@ async function withTries(fn, { sleep, now, deadline, stop = isFinal }) {
 }
 
 // The object's functions, each failing at once once the signal is aborted.
-function guarded(obj, signal) {
+export function guarded(obj, signal) {
   const out = {}
   for (const [k, v] of Object.entries(obj)) {
     out[k] = typeof v === 'function'
@@ -137,7 +138,9 @@ export async function startService({ config, deps }) {
     })
     aborted.catch(() => {}) // never an unhandled rejection
     try {
-      const pass = runPass(kind, { jotform: guarded(jotform, controller.signal), vg: guarded(vg, controller.signal), config, stdout })
+      // An abandoned pass goes quiet: no OK line after the FAILED one.
+      const quiet = (line) => { if (!controller.signal.aborted) stdout(line) }
+      const pass = runPass(kind, { jotform: guarded(jotform, controller.signal), vg: guarded(vg, controller.signal), config, stdout: quiet })
       pass.catch(() => {}) // an abandoned pass may fail later
       const counts = await Promise.race([pass, aborted])
       const warn = warnLine(counts)

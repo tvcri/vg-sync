@@ -138,14 +138,17 @@ test('at fullRunUtc a full pass is queued behind a running change and runs right
 })
 
 test('a queued full goes before a queued change', async () => {
-  // A change is running at 08:00 (a full queues); the change tick would also fire while it runs.
-  const { clock, calls, s } = setup('2026-11-14T07:57:00Z', (kind, c) => after(c, kind === 'change' ? 10 * MIN : 0, ok), { changeEveryMs: 60_000 })
+  // The start pass is quick; the change tick (3 h) is armed. The 08:00 full runs 30 hours, so while it runs the
+  // change tick fires (a change queues) and the next night's 08:00 queues a full. The full goes first.
+  let n = 0
+  const { clock, calls, s } = setup('2026-11-14T07:00:00Z', (kind, c) => after(c, ++n === 2 ? 30 * HOUR : 0, ok), { changeEveryMs: 3 * HOUR })
   s.start()
   await clock.advance(0)
-  await clock.advance(MIN) // change runs 07:58 - 08:08; full queued at 08:00
-  await clock.advance(11 * MIN)
-  assert.deepEqual(calls.slice(0, 3), ['full 2026-11-14T07:57:00.000Z', 'change 2026-11-14T07:58:00.000Z', 'full 2026-11-14T08:08:00.000Z'])
-  assert.equal(calls[3], 'change 2026-11-14T08:09:00.000Z')
+  await clock.advance(HOUR + 1) // the 08:00 full starts, running to 14:00 the next day
+  await clock.advance(30 * HOUR)
+  assert.deepEqual(calls.slice(0, 4), [
+    'full 2026-11-14T07:00:00.000Z', 'full 2026-11-14T08:00:00.000Z', 'full 2026-11-15T14:00:00.000Z', 'change 2026-11-15T14:00:00.000Z',
+  ])
   await stopAll(clock, s)
 })
 

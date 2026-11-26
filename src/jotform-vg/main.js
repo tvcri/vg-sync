@@ -9,7 +9,7 @@ import { loadConfig } from './config.js'
 import { createVgClient } from './vg.js'
 import { openJotform } from './jotform-mock.js'
 import { runPass } from './pass.js'
-import { startService, describeError, warnLine } from './service.js'
+import { startService, describeError, warnLine, guarded } from './service.js'
 
 const USAGE = `Usage:
   node src/jotform-vg/main.js
@@ -60,23 +60,28 @@ async function once(argv, deps) {
   try {
     const config = loadConfig(env)
     if (!config.writeVg) stdout('JOTFORM DRY RUN: nothing is written to VG')
-    const vg = vgFor(config, { ...deps, now })
-    const jotform = await jotformFor(config, deps, stdout)
+    const controller = new AbortController()
+    const rawVg = vgFor(config, { ...deps, now })
+    const rawJotform = await jotformFor(config, deps, stdout)
+    // After a timeout or signal every further call to VG or JotForm is refused, and the pass goes quiet.
+    const vg = guarded(rawVg, controller.signal)
+    const jotform = guarded(rawJotform, controller.signal)
+    const quiet = (line) => { if (!controller.signal.aborted) stdout(line) }
     let timer
-    const timeout = new Promise((_, reject) => {
-      timer = setTimer(() => reject(Object.assign(new Error(`run timed out after ${config.runTimeoutMinutes} minutes`), { safe: true })), config.runTimeoutMinutes * 60_000)
+    const aborted = new Promise((_, reject) => {
+      const fail = (message) => (reason) => {
+        controller.abort(reason)
+        reject(Object.assign(new Error(message), { safe: true }))
+      }
+      timer = setTimer(() => fail(`run timed out after ${config.runTimeoutMinutes} minutes`)('timeout'), config.runTimeoutMinutes * 60_000)
+      onSignal?.('SIGTERM', () => fail('run stopped')('shutdown'))
+      onSignal?.('SIGINT', () => fail('run stopped')('shutdown'))
     })
-    timeout.catch(() => {})
-    const stopped = new Promise((_, reject) => {
-      const stop = () => reject(Object.assign(new Error('run stopped'), { safe: true }))
-      onSignal?.('SIGTERM', stop)
-      onSignal?.('SIGINT', stop)
-    })
-    stopped.catch(() => {})
+    aborted.catch(() => {})
     try {
-      const pass = runPass(kind, { jotform, vg, config, stdout })
+      const pass = runPass(kind, { jotform, vg, config, stdout: quiet })
       pass.catch(() => {})
-      const counts = await Promise.race([pass, timeout, stopped])
+      const counts = await Promise.race([pass, aborted])
       const warn = warnLine(counts)
       if (warn) stdout(warn)
     } finally {
@@ -226,6 +231,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     readFile: (p) => readFile(p, 'utf8'),
   })
   // The service exits at once: a pass stopped mid-read leaves its request behind.
-  if (envArgs.rest.length === 0) process.exit(code)
+  // A hand-run pass that failed or was stopped exits too: an abandoned request must not keep it alive.
+  if (envArgs.rest.length === 0 || code !== 0) process.exit(code)
   process.exitCode = code
 }

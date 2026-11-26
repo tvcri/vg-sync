@@ -205,3 +205,21 @@ test('describeError keeps the operation and status, drops the rest', () => {
   assert.equal(describeError(Object.assign(new Error('Jane Doe odd'), { status: 502 })), 'HTTP 502')
   assert.equal(describeError(new Error('parse of Jane Doe failed')), 'unexpected Error')
 })
+
+test('describeError prints a TypeError only when it is fetch failed or has a known code', () => {
+  assert.equal(describeError(new TypeError('fetch failed')), 'network error: fetch failed')
+  assert.equal(describeError(Object.assign(new TypeError('x Jane Doe'), { cause: { code: 'ECONNREFUSED' } })), 'network error: ECONNREFUSED')
+  assert.equal(describeError(new TypeError('Cannot read Jane Doe')), 'unexpected TypeError')
+})
+
+test('an abandoned pass prints nothing after its FAILED line', async () => {
+  let release
+  const gate = new Promise((r) => { release = r })
+  const s = setup({ runPass: async (kind, { stdout }) => { await gate; stdout('JOTFORM OK full late') } })
+  const svc = await start(s)
+  await s.c.advance(31 * MIN)
+  release()
+  await flush()
+  assert.ok(!s.out.includes('JOTFORM OK full late'))
+  await svc.stop()
+})

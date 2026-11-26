@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { submission } from './fixtures/submissions.js'
 import { run, envFileFrom } from '../../src/jotform-vg/main.js'
 
 const state = { submissions: [], form: { status: 'ENABLED' } }
@@ -59,7 +60,7 @@ test('--once: a failure prints a sanitized line and resolves 1', async () => {
 test('--once: a missing setting is reported and resolves 1', async () => {
   const { d, out } = deps({ env: env({ VG_CLIENT_ID: '' }) })
   assert.equal(await run(['--once', 'full'], d), 1)
-  assert.match(out.at(-1), /^JOTFORM FAILED full: /)
+  assert.equal(out.at(-1), 'JOTFORM FAILED full: Missing environment variables: VG_CLIENT_ID')
 })
 
 test('setup signs in, checks the grant and JotForm, and prints SETUP OK', async () => {
@@ -123,4 +124,35 @@ test('service: a fatal pass error resolves 1', async () => {
 test('envFileFrom takes --env anywhere', () => {
   assert.deepEqual(envFileFrom(['--once', '--env', 'x.env', 'full']), { file: 'x.env', explicit: true, rest: ['--once', 'full'] })
   assert.throws(() => envFileFrom(['--env']), /needs a file/)
+})
+
+test('--once: a timeout or signal refuses further VG calls and the pass goes quiet', async () => {
+  for (const how of ['timeout', 'signal']) {
+    let release
+    const gate = new Promise((r) => { release = r })
+    const writes = []
+    const { d, out } = deps({
+      readFile: async () => JSON.stringify({ submissions: [submission()], form: { status: 'ENABLED' } }),
+      vg: fakeVg({
+        listPersons: async () => { await gate; return [] },
+        putSubmission: async (id) => { writes.push(id) }, listSubmissions: async () => [],
+      }),
+    })
+    const handlers = {}
+    let fire
+    d.onSignal = (n, fn) => { handlers[n] = fn }
+    d.setTimer = (fn) => { fire = fn; return 1 }
+    d.clearTimer = () => {}
+    d.env = env({ WRITE_VG: 'true' })
+    const p = run(['--once', 'full'], d)
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+    if (how === 'timeout') fire()
+    else handlers.SIGINT()
+    assert.equal(await p, 1)
+    // The abandoned pass resumes and tries to write: refused (the write is never reached), nothing printed after FAILED.
+    release()
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r))
+    assert.equal(writes.length, 0, how)
+    assert.match(out.at(-1), how === 'timeout' ? /^JOTFORM FAILED full: run timed out after 30 minutes$/ : /^JOTFORM FAILED full: run stopped$/)
+  }
 })
