@@ -1,16 +1,28 @@
-name: Publish Docker image
-env:
-  DOCKERHUB_REPOSITORY: carlsmig/vg-sync
-# No pull_request trigger here: this workflow holds the Docker Hub token and the
-# repo is public. PR tests run in test.yml, which has no secrets.
+name: Publish one service image
+# Called by publish-lgl-vg.yml and publish-vg-mailchimp.yml, each with its own
+# path filter, so a change to one service builds and deploys only that service.
+# No pull_request trigger anywhere: the callers pass the Docker Hub token and
+# the repo is public. PR tests run in test.yml, which has no secrets.
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
+  workflow_call:
+    inputs:
+      repository:
+        description: Docker Hub repository, e.g. carlsmig/vg-sync-lgl
+        required: true
+        type: string
+      dockerfile:
+        description: Dockerfile path from the repo root
+        required: true
+        type: string
+      description:
+        description: org.opencontainers.image.description label
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
 jobs:
   test:
     name: Test
@@ -38,12 +50,13 @@ jobs:
       - name: Prepare variables
         id: prep
         run: |
-          DOCKER_IMAGE="${{ env.DOCKERHUB_REPOSITORY }}"
+          DOCKER_IMAGE="${{ inputs.repository }}"
           # 7-char short SHA, matching the tags build.sh has always pushed
           SHA="$(git rev-parse --short=7 HEAD)"
           {
             echo "sha=${SHA}"
             echo "tags=${DOCKER_IMAGE}:${SHA},${DOCKER_IMAGE}:latest"
+            echo "title=${DOCKER_IMAGE#*/}"
             echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           } >> "$GITHUB_OUTPUT"
       - name: Set up Docker Buildx
@@ -59,7 +72,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          file: ./Dockerfile
+          file: ${{ inputs.dockerfile }}
           push: true
           # Keep :latest a single image manifest (as build.sh produces) rather
           # than an index with attestation manifests.
@@ -68,10 +81,10 @@ jobs:
           sbom: false
           tags: ${{ steps.prep.outputs.tags }}
           labels: |
-            org.opencontainers.image.title=vg-sync
-            org.opencontainers.image.description=Headless sync between Little Green Light, Village Green and Mailchimp
+            org.opencontainers.image.title=${{ steps.prep.outputs.title }}
+            org.opencontainers.image.description=${{ inputs.description }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.created=${{ steps.prep.outputs.created }}
             org.opencontainers.image.revision=${{ github.sha }}
       - name: Image digest
-        run: echo "${{ env.DOCKERHUB_REPOSITORY }}:${{ steps.prep.outputs.sha }} ${{ steps.docker_build.outputs.digest }}"
+        run: echo "${{ inputs.repository }}:${{ steps.prep.outputs.sha }} ${{ steps.docker_build.outputs.digest }}"

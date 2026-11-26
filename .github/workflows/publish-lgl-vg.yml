@@ -1,0 +1,25 @@
+name: Publish lgl-vg image
+# Builds carlsmig/vg-sync-lgl (compose service `sync`) when its inputs change.
+# If lgl-vg.Dockerfile ever copies a new path, add it here; a missing entry
+# means a real change silently doesn't deploy.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/lgl-vg/**'
+      - 'lgl-vg.Dockerfile'
+      - 'package.json'
+      - 'policy.json'
+      - 'policy-reconcile.json'
+      - '.github/workflows/publish-lgl-vg.yml'
+      - '.github/workflows/publish-image.yml'
+jobs:
+  publish:
+    uses: ./.github/workflows/publish-image.yml
+    with:
+      repository: carlsmig/vg-sync-lgl
+      dockerfile: lgl-vg.Dockerfile
+      description: Headless sync between Little Green Light and Village Green
+    secrets: inherit

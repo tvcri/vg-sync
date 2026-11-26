@@ -81,15 +81,31 @@ anything but absent. Both writes are off until `WRITE_MAILCHIMP_ADD` and
 command, setting, log line and the records format is in
 [`docs/vg-mailchimp.1.md`](docs/vg-mailchimp.1.md).
 
-## The image
+## The images
 
-The service ships as the Docker image `carlsmig/vg-sync`, built by
-`.github/workflows/publish-docker.yml` on every push to `main` and tagged
-`:<sha7>` and `:latest`. The image carries the commit in the
+Each service ships as its own Docker image, so a change to one service builds
+and redeploys only that service:
+
+| Service | Image | Dockerfile | Workflow |
+|---|---|---|---|
+| `sync` (LGL ↔ VG) | `carlsmig/vg-sync-lgl` | `lgl-vg.Dockerfile` | `publish-lgl-vg.yml` |
+| `mailchimp` (VG → Mailchimp) | `carlsmig/vg-sync-mailchimp` | `vg-mailchimp.Dockerfile` | `publish-vg-mailchimp.yml` |
+
+Each workflow runs on a push to `main` that touches that service's inputs (its
+`src/` folder, its Dockerfile, `package.json`, plus the LGL service's
+`policy.json` and `policy-reconcile.json`), and both call
+`.github/workflows/publish-image.yml`, which runs every test before it
+builds. If a Dockerfile ever copies a new path, add the path to its workflow's
+filter: a missing entry means a real change silently doesn't deploy. Images
+are tagged `:<sha7>` and `:latest`, and carry the commit in the
 `org.opencontainers.image.revision` label and the `IMAGE_REVISION`
-environment variable. It holds only `src/`, `package.json`, `policy.json` and
-`policy-reconcile.json` (the go-live pass's rules, `docs/policy.json.5.md`);
-two things are bind mounts:
+environment variable.
+
+An image holds `package.json` and its own `src/` folder only; the LGL image
+also holds `policy.json` and `policy-reconcile.json` (the go-live pass's rules,
+`docs/policy.json.5.md`). The services share no code, so neither image needs
+the other's folder. A new service gets its own folder, Dockerfile and calling
+workflow. Two things are bind mounts:
 
 - `.env` to `/app/.env` (read-only)
 - the decisions directory to `/app/out` (writable by the `node` user)
@@ -99,13 +115,13 @@ uid 1000, the image's `node` user (`install -d -o 1000 -g 1000 vg-sync/out`);
 docker would otherwise create it root-owned, and the bind mount hides the
 image's own chown. `.env` must be readable by uid 1000.
 
-`deploy/docker-compose.example.yml` shows the `sync` service: pinned by
+`deploy/docker-compose.example.yml` shows both services: each pinned by
 digest in the `repo@sha256:` form the deployer expects, `restart:
 unless-stopped` and a 30 second stop grace period so a pass can stop cleanly.
-To try it locally:
+To try one locally:
 
 ```
-docker build --build-arg IMAGE_REVISION=$(git rev-parse HEAD) -t vg-sync:local .
+docker build -f lgl-vg.Dockerfile --build-arg IMAGE_REVISION=$(git rev-parse HEAD) -t vg-sync-lgl:local .
 ```
 
 ## Running a full pass by hand

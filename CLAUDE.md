@@ -76,6 +76,12 @@ as they are.
   a restored snapshot is real data. Partial writes to either are not
   precious; both can be reapplied. Leave the demo stack (`village-green-demo-*`,
   database port 60002) alone.
+- **One image per service.** Each service under `src/` has its own
+  Dockerfile, Docker Hub repository and path-filtered publish workflow
+  calling `publish-image.yml` (README, "The images"), so a merge redeploys
+  only the services whose inputs it touched. The services share no code;
+  copy a helper rather than import across folders. A new service gets all
+  three, plus a deployer row and a log-shipping entry in vg-utils.
 - **Every write path is dry-run by default** in the existing tooling. Keep
   that habit here.
 - **Never pipe a long run through `tail`.** Stream it or `tee` it.

@@ -1,0 +1,23 @@
+name: Publish vg-mailchimp image
+# Builds carlsmig/vg-sync-mailchimp (compose service `mailchimp`) when its
+# inputs change. If vg-mailchimp.Dockerfile ever copies a new path, add it
+# here; a missing entry means a real change silently doesn't deploy.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/vg-mailchimp/**'
+      - 'vg-mailchimp.Dockerfile'
+      - 'package.json'
+      - '.github/workflows/publish-vg-mailchimp.yml'
+      - '.github/workflows/publish-image.yml'
+jobs:
+  publish:
+    uses: ./.github/workflows/publish-image.yml
+    with:
+      repository: carlsmig/vg-sync-mailchimp
+      dockerfile: vg-mailchimp.Dockerfile
+      description: Headless sync from Village Green to the Mailchimp audience
+    secrets: inherit
