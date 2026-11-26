@@ -18,6 +18,14 @@ harness design is `docs/superpowers/specs/2026-11-13-test-harness-design.md`.
 `docs/context-2026-11-11.md` is the founding brief, now history. The VG →
 Mailchimp executable comes after LGL ↔ VG.
 
+**Status (2026-11-26): a third executable, `src/jotform-vg/`, is built and
+tested** (JotForm Friendly Calls & Visits reports → VG; image, workflow and
+deploy example in place; not yet deployed). Its design is
+`docs/superpowers/specs/2026-11-26-jotform-vg-design.md`, its reference
+`docs/jotform-vg.1.md`. Go-live starts from
+`docs/handoff-2026-11-26-jotform-go-live.md`; it needs village-green PR #165
+merged first.
+
 **The engineer does not decide business rules.** Which system wins a
 conflict, who gets mailed, what deceased means for a record: those are the
 customer's. Do not ask the engineer to pick them. Design so they are

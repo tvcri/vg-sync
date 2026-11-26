@@ -1,5 +1,5 @@
 name: Publish one service image
-# Called by publish-lgl-vg.yml and publish-vg-mailchimp.yml, each with its own
+# Called by publish-lgl-vg.yml, publish-vg-mailchimp.yml and publish-jotform-vg.yml, each with its own
 # path filter, so a change to one service builds and deploys only that service.
 # No pull_request trigger anywhere: the callers pass the Docker Hub token and
 # the repo is public. PR tests run in test.yml, which has no secrets.

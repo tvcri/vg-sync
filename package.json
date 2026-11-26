@@ -14,6 +14,9 @@
     "harness": "node harness/run.js",
     "mailchimp": "node src/vg-mailchimp/main.js",
     "mailchimp-once": "node src/vg-mailchimp/main.js --once",
-    "mailchimp-setup": "node src/vg-mailchimp/main.js setup"
+    "mailchimp-setup": "node src/vg-mailchimp/main.js setup",
+    "jotform": "node src/jotform-vg/main.js",
+    "jotform-once": "node src/jotform-vg/main.js --once",
+    "jotform-setup": "node src/jotform-vg/main.js setup"
   }
 }

@@ -1,0 +1,99 @@
+// Reads the JotForm → VG service configuration from environment variables and validates it.
+
+const REQUIRED = [
+  'JOTFORM_API_KEY',
+  'JOTFORM_FORM_ID',
+  'VG_API_URL',
+  'VG_OIDC_URL',
+  'VG_CLIENT_ID',
+  'VG_CLIENT_SECRET',
+]
+
+// A settings error names the setting and its mistake, never personal data or a secret, so it is safe to print.
+// (Only the non-secret numeric and clock settings echo their value; the keys and secrets are never echoed.)
+const configError = (message) => Object.assign(new Error(message), { safe: true })
+
+function present(v) {
+  return v !== undefined && v !== null && String(v).trim() !== ''
+}
+
+function toUrl(name, value) {
+  const s = String(value).trim()
+  let u
+  try {
+    u = new URL(s)
+  } catch {
+    throw configError(`${name} is not a valid URL`)
+  }
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) {
+    throw configError(`${name} must be an https URL (http is allowed only for localhost)`)
+  }
+  return s.replace(/\/+$/, '')
+}
+
+function toCount(env, name, fallback) {
+  if (!present(env[name])) return fallback
+  const s = String(env[name]).trim()
+  if (!/^\d+$/.test(s)) throw configError(`${name} must be a whole number, got "${s}"`)
+  return Number(s)
+}
+
+function toPositive(env, name, fallback) {
+  const n = toCount(env, name, fallback)
+  if (n < 1) throw configError(`${name} must be a positive whole number, got "${n}"`)
+  return n
+}
+
+function toBounded(env, name, fallback, max) {
+  const n = toPositive(env, name, fallback)
+  if (n > max) throw configError(`${name} must be at most ${max}, got "${n}"`)
+  return n
+}
+
+function toAtLeast(env, name, fallback, min) {
+  const n = toCount(env, name, fallback)
+  if (n < min) throw configError(`${name} must be at least ${min}, got "${n}"`)
+  return n
+}
+
+function toClock(env, name, fallback) {
+  if (!present(env[name])) return fallback
+  const s = String(env[name]).trim()
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(s)) throw configError(`${name} must be HH:MM (24-hour, UTC), got "${s}"`)
+  return s
+}
+
+export function loadConfig(env = process.env) {
+  // With JOTFORM_MOCK (a state file standing in for JotForm) no API key is needed.
+  const mock = present(env.JOTFORM_MOCK)
+  const missing = REQUIRED.filter((k) => !present(env[k]) && !(k === 'JOTFORM_API_KEY' && mock))
+  if (missing.length) throw configError(`Missing environment variables: ${missing.join(', ')}`)
+
+  return {
+    jotform: {
+      apiKey: present(env.JOTFORM_API_KEY) ? String(env.JOTFORM_API_KEY).trim() : '',
+      formId: String(env.JOTFORM_FORM_ID).trim(),
+      mock: mock ? String(env.JOTFORM_MOCK).trim() : null,
+    },
+    vg: {
+      apiUrl: toUrl('VG_API_URL', env.VG_API_URL),
+      oidcUrl: toUrl('VG_OIDC_URL', env.VG_OIDC_URL),
+      clientId: String(env.VG_CLIENT_ID).trim(),
+      clientSecret: String(env.VG_CLIENT_SECRET).trim(),
+      scope: present(env.VG_SCOPE) ? String(env.VG_SCOPE).trim() : 'vg',
+    },
+    writeVg: String(env.WRITE_VG ?? '').trim() === 'true',
+    // Capped at a day, like RUN_TIMEOUT_MINUTES: a larger interval would overflow Node's timer.
+    changeEveryMinutes: toBounded(env, 'CHANGE_EVERY_MINUTES', 5, 1440),
+    fullRunUtc: toClock(env, 'FULL_RUN_UTC', '08:00'),
+    // At least an hour: the window must cover the hour repeated when clocks fall back.
+    overlapMinutes: toAtLeast(env, 'OVERLAP_MINUTES', 120, 60),
+    minFullPercent: toBounded(env, 'MIN_FULL_PERCENT', 90, 100),
+    dateAheadDays: toCount(env, 'DATE_AHEAD_DAYS', 1),
+    dateBehindDays: toCount(env, 'DATE_BEHIND_DAYS', 90),
+    // Capped at a day: past about 35,791 minutes Node's timer would fire at once.
+    runTimeoutMinutes: toBounded(env, 'RUN_TIMEOUT_MINUTES', 30, 1440),
+    imageRevision: present(env.IMAGE_REVISION) ? String(env.IMAGE_REVISION).trim() : null,
+  }
+}
