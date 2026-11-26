@@ -102,6 +102,7 @@
   - Minutes `'45 min'` → `unreadable === 'time-spent'`; `'0'` is fine.
   - No email answer → `volunteerEmail === null`.
   - A reporting tag that is not a date (`'sometime'`) → `reportingTag === null` (VG's PUT rejects anything but `YYYY-MM-DD` or null, which would fail the whole pass).
+  - Answers longer than VG's column limits are trimmed to them, never sent long (VG's PUT answers 400, and the report would fail every pass): `activityOther` 500, name parts 100, `volunteerEmail` 254, `contactType` 50, `villageName` 200. Test an "Other" text of 600 characters → 500. Read the limits from the app's `FcvSyncSubmissionPut` schema when implementing; if they differ, the schema wins.
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -137,6 +138,7 @@
 - Produces:
   - `buildRoster(persons) → Roster`, from VG `GET /persons?projection=detail` rows: each `{ personId, firstName, lastName, nickname, email /* lowercased or null */, villageId /* string or null */, isMember: memberStatus != null, isVolunteer: volunteerStatus != null }`. Check the real response shape on the dev API before writing this (names are under `detail`, village under `village.villageId`).
   - `rememberedKey(role, nameKey, villageId) → string`, `buildRemembered(nameMatches) → Map<string, { personId, ignore }>`.
+  - A remembered `personId` that is not in the roster (the person was deleted after staff answered) is treated as no answer: matching goes on to the next rule. VG would refuse the PUT with 422, failing every pass. Test it.
   - `matchPerson({ role: 'volunteer' | 'member', typed: { first, last, raw }, email, villageId }, roster, remembered) → { personId, how } | { ignore: true } | { personId: null, candidates: string[] }`. `how` ∈ `'remembered' | 'email' | 'name-village' | 'name-elsewhere'`. Rules, in order, as the spec's "Matching" section:
     1. Remembered (role, `nameKey(raw)`, villageId or 0).
     2. Email (volunteer only): roster people with that email **and** `nameMatches`; exactly one → match; otherwise go on.
@@ -217,6 +219,7 @@
 
 - [ ] **Step 1: Write failing tests** with the JotForm mock and a fake VG (an in-memory object implementing Task 7's methods):
   - First full pass over 3 invented submissions inserts 3.
+  - Go-live: stored legacy rows (never edited, so `jotformUpdatedAt` null on both sides, match columns and name parts empty) are all re-sent on the first full pass. `rowsDiffer` must compare the match columns, not only `updated_at`.
   - A change pass after one edit (mock `updated_at` set) updates 1; unchanged rows are not re-sent.
   - A submission created and edited inside the window is PUT once (Review Focus 1).
   - A change pass when the stored cursor is null runs as full.

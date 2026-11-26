@@ -439,8 +439,21 @@ Settings with safe defaults until answered:
 
 - The holds page (VG client), after question 5.
 - Changing a remembered answer with no open hold behind it (a staff
-  read/edit of `fcv_name_match`). The sync already applies a changed
-  answer to every report; the endpoint comes with the holds page.
+  read/edit of `fcv_name_match`), and **changing or clearing a date
+  decision** on a report. Once its hold closes, a resolution can no longer
+  be changed through the API (409), so a wrong click is stuck until these
+  endpoints exist. The sync already applies a changed answer to every
+  report. Both endpoints **must ship with the holds page**, gated by
+  `fcv_sync:resolve` and audited (independent review, 2026-11-26).
+- **What staff need to see holds.** `GET /friends/sync/holds` is gated by
+  `fcv_sync:read`, which also opens the sync's raw feed (every report
+  federation-wide, with notes and emails) and the remembered answers.
+  Decide when the page assigns staff permissions; for example, let
+  `fcv_sync:resolve` alone read holds.
+- **`submittedAt` time zone.** `GET /friends` declares `submittedAt` a UTC
+  date-time, but the value is JotForm's Eastern wall-clock time, as the
+  July prototype also stored it. Nothing reads it today; fix the label or
+  the value when the village pages (VG-202611-530) show it.
 - Using a volunteer-village question if one is added.
 - Retiring this executable once the form moves into VG.
 
