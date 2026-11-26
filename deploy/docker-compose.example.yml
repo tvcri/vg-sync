@@ -2,7 +2,7 @@
 services:
   sync:
     # Keep this line in the `repo@sha256:` form: the deployer rewrites it.
-    image: carlsmig/vg-sync@sha256:<digest>  # <commit>
+    image: carlsmig/vg-sync-lgl@sha256:<digest>  # <commit>
     restart: unless-stopped
     # A tiny init as PID 1 forwards SIGTERM to node and reaps zombies.
     init: true
@@ -18,9 +18,8 @@ services:
       - ./vg-sync/out:/app/out
   mailchimp:
     # Keep this line in the `repo@sha256:` form: the deployer rewrites it.
-    # It is the same image as `sync`; only the command differs.
-    image: carlsmig/vg-sync@sha256:<digest>  # <commit>
-    command: ["node", "src/vg-mailchimp/main.js"]
+    # Its own image, built only when the mailchimp service's code changes.
+    image: carlsmig/vg-sync-mailchimp@sha256:<digest>  # <commit>
     restart: unless-stopped
     # A tiny init as PID 1 forwards SIGTERM to node and reaps zombies.
     init: true
