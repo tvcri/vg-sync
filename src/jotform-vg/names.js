@@ -6,12 +6,17 @@ export { NICKNAMES }
 // Lowercase letters only, accents folded, every run of anything else one space. Combining marks are
 // stripped from every script; accepted because the membership's names are Latin-script and the effect
 // elsewhere is a rare over-match.
+// VG's name_key column holds 200 characters; capping here keeps matching, remembered keys and holds in step.
+const KEY_MAX = 200
+
 export function nameKey (s) {
   return String(s ?? '')
     .normalize('NFKD')
     .replace(/\p{M}+/gu, '')
     .toLowerCase()
     .replace(/[^\p{L}]+/gu, ' ')
+    .trim()
+    .slice(0, KEY_MAX)
     .trim()
 }
 

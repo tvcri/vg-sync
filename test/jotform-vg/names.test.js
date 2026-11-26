@@ -161,3 +161,9 @@ test('distinct formal names do not fit each other; Dora is not a short form', ()
   assert.ok(!fits('Bobbi', 'Roberta'))
   assert.ok(!fits('Elizabeth', 'Eliza'))
 })
+
+test('nameKey is capped at 200 characters', () => {
+  const k = nameKey('abcdefghi '.repeat(30))
+  assert.ok(k.length <= 200)
+  assert.equal(k, k.trim())
+})

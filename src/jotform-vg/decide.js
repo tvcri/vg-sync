@@ -61,8 +61,14 @@ export function decideRow (parsed, volunteerMatch, memberMatch, dateDecision, se
 
 // Rebuilds a Parsed from a stored row, to re-match without JotForm. Whether a report was unreadable cannot
 // be recomputed from the row, so a stored 'unreadable' stays unreadable (reason unknown).
+// Returns null for a legacy row (the July prototype stored typed names only when they did not match, so a
+// matched legacy row has none). Callers must not re-decide such a row from storage; it is re-parsed when
+// JotForm next lists it (the go-live full pass). Unreadable rows are exempt: they stay unreadable regardless.
 export function rowFromStored (stored) {
   const s = stored
+  if (s.held !== 'unreadable' && s.volunteerFirst == null && s.volunteerLast == null && s.memberFirst == null && s.memberLast == null) {
+    return null
+  }
   return {
     id: String(s.id),
     submittedAt: s.submittedAt,
@@ -99,18 +105,30 @@ function sameColumn (col, x, y) {
   return x === y
 }
 
+// A stored null activityTypes equals [] on purpose: VG stores no activities as null.
 export function rowsDiffer (a, b) {
   return COLUMNS.some((c) => !sameColumn(c, a?.[c], b?.[c]))
+}
+
+function compareIds (a, b) {
+  a = String(a)
+  b = String(b)
+  if (a.length !== b.length && /^\d+$/.test(a) && /^\d+$/.test(b)) { const x = BigInt(a); const y = BigInt(b); return x < y ? -1 : x > y ? 1 : 0 }
+  return a < b ? -1 : a > b ? 1 : 0
 }
 
 const unmatched = (r) => r && !r.ignore && r.personId == null
 
 // Holds for PUT /friends/sync/holds. Name holds come only from reports held for 'name' (an unreadable,
 // ignored or date-held report is not waiting on a name). Output is sorted so tests and logs are stable.
-export function collectHolds (decided) {
+// `priorReasons` (Map of submission id to reason, from the open unreadable holds) restores the reason of a
+// stored unreadable row, whose reason cannot be recomputed.
+export function collectHolds (decided, { priorReasons = new Map() } = {}) {
   const names = new Map()
   const out = []
-  for (const { parsed, row, volunteerResult, memberResult } of decided) {
+  // Oldest report first, so the typed spelling and email kept do not depend on input order.
+  const ordered = [...decided].sort((x, y) => (x.parsed.submittedAt < y.parsed.submittedAt ? -1 : x.parsed.submittedAt > y.parsed.submittedAt ? 1 : compareIds(x.parsed.id, y.parsed.id)))
+  for (const { parsed, row, volunteerResult, memberResult } of ordered) {
     if (row.held === 'name') {
       for (const [role, result, typed] of [['volunteer', volunteerResult, parsed.volunteer], ['member', memberResult, parsed.member]]) {
         if (!unmatched(result)) continue
@@ -139,7 +157,7 @@ export function collectHolds (decided) {
       const rule = dayDifference(parsed.visitDate, parsed.submittedAt) > 0 ? 'ahead' : 'behind'
       out.push({ kind: 'date', submissionId: String(row.id), detail: { visitDate: parsed.visitDate, submittedAt: parsed.submittedAt, rule } })
     } else if (row.held === 'unreadable') {
-      out.push({ kind: 'unreadable', submissionId: String(row.id), detail: { reason: parsed.unreadable ?? 'stored' } })
+      out.push({ kind: 'unreadable', submissionId: String(row.id), detail: { reason: parsed.unreadable === 'stored' ? (priorReasons.get(String(row.id)) ?? 'stored') : (parsed.unreadable ?? 'stored') } })
     }
   }
   for (const h of names.values()) {

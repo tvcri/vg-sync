@@ -120,3 +120,41 @@ test('an empty name never makes a name hold', () => {
   assert.equal(row.held, 'name')
   assert.deepEqual(collectHolds([{ parsed: p, row, volunteerResult: miss(), memberResult: ok('8') }]), [])
 })
+
+test('questionableDate uses civil dates across midnight', () => {
+  assert.equal(questionableDate('2027-01-01', '2026-12-31 23:30:00', { aheadDays: 0, behindDays: 90 }), true)
+  assert.equal(questionableDate('2027-01-01', '2026-12-31 23:30:00', { aheadDays: 1, behindDays: 90 }), false)
+})
+
+test('legacy stored row (no name parts) is not re-decidable', () => {
+  const legacy = { ...decideRow(parsed(), ok('7'), ok('8'), null, settings), volunteerFirst: null, volunteerLast: null, memberFirst: null, memberLast: null, volunteerMatch: null, memberMatch: null }
+  assert.equal(rowFromStored(legacy), null)
+  const normal = decideRow(parsed(), ok('7'), ok('8'), null, settings)
+  assert.notEqual(rowFromStored(normal), null)
+})
+
+test('accepted-date counting row round-trips with no difference', () => {
+  const p = parsed({ visitDate: '2026-12-30' })
+  const stored = { ...decideRow(p, ok('7'), ok('8'), 'accept', settings), dateDecision: 'accept' }
+  assert.equal(stored.held, null)
+  const again = decideRow(rowFromStored(stored), ok('7'), ok('8'), stored.dateDecision, settings)
+  assert.equal(rowsDiffer(stored, again), false)
+})
+
+test('stored unreadable reason is restored from prior holds', () => {
+  const u = decideRow(parsed({ unreadable: 'village', villageId: null }), miss(), miss(), null, settings)
+  const p = rowFromStored(u)
+  const d = [{ parsed: p, row: decideRow(p, miss(), miss(), null, settings), volunteerResult: miss(), memberResult: miss() }]
+  assert.equal(d[0].row.held, 'unreadable')
+  assert.equal(collectHolds(d)[0].detail.reason, 'stored')
+  assert.equal(collectHolds(d, { priorReasons: new Map([['1001', 'village']]) })[0].detail.reason, 'village')
+})
+
+test('name hold does not depend on input order', () => {
+  const a = entry('10', { submittedAt: '2026-11-18 10:00:00', volunteer: { first: 'Jon', last: 'Doe', raw: 'Jon Doe' }, volunteerEmail: 'old@example.org' }, miss(), ok('8'))
+  const b = entry('11', { submittedAt: '2026-11-19 10:00:00', volunteer: { first: 'JON', last: 'DOE', raw: 'JON DOE' }, volunteerEmail: 'new@example.org' }, miss(), ok('8'))
+  const fwd = collectHolds([a, b])
+  assert.deepEqual(collectHolds([b, a]), fwd)
+  assert.equal(fwd[0].rawName, 'Jon Doe')
+  assert.equal(fwd[0].detail.email, 'old@example.org')
+})
