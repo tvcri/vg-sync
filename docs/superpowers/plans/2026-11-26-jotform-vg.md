@@ -101,6 +101,7 @@
   - `village` `'Atlantis'` (unknown) → `unreadable === 'village'`, `villageId === null`.
   - Minutes `'45 min'` → `unreadable === 'time-spent'`; `'0'` is fine.
   - No email answer → `volunteerEmail === null`.
+  - A reporting tag that is not a date (`'sometime'`) → `reportingTag === null` (VG's PUT rejects anything but `YYYY-MM-DD` or null, which would fail the whole pass).
 - [ ] **Step 2: Run.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
