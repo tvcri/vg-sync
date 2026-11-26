@@ -121,7 +121,39 @@ test('short forms used by several formal names fit every one of them', () => {
   assert.ok(!fits('Samuel', 'Samantha'))
 })
 
-test('no short form lists only one formal name that another group also claims', () => {
-  // every key that is in two or more groups stays consistent with the principle: nothing to assert but the table shape
-  for (const g of NICKNAMES) assert.equal(new Set(g).size, g.length)
+test('table-driven: each ambiguous short form fits every formal name it abbreviates', () => {
+  const fits = (typed, firstName) => nameMatches({ first: typed, last: 'Doe' }, { firstName, lastName: 'Doe' })
+  for (const [short, formals] of [
+    ['pat', ['Patrick', 'Patricia']],
+    ['sam', ['Samuel', 'Samantha']],
+    ['sandy', ['Sandra', 'Alexandra', 'Alexander']],
+    ['alex', ['Alexander', 'Alexandra', 'Alexis']],
+    ['al', ['Albert', 'Alfred', 'Alan', 'Allen', 'Alvin']],
+    ['nicky', ['Nicholas', 'Nicole']],
+    ['stevie', ['Steven', 'Stephen', 'Stephanie']],
+    ['bobby', ['Robert', 'Roberta']],
+    ['charlie', ['Charles', 'Charlotte', 'Charlene']],
+    ['danny', ['Daniel', 'Danielle']],
+    ['jerry', ['Gerald', 'Geraldine', 'Gerard', 'Jeremy', 'Jerome']],
+    ['ronnie', ['Ronald', 'Veronica']],
+    ['freddie', ['Frederick', 'Frederica', 'Alfred']],
+    ['ed', ['Edward', 'Edwin', 'Edmund']],
+    ['ted', ['Edward', 'Edwin', 'Edmund', 'Theodore']],
+    ['kathy', ['Katherine', 'Catherine', 'Kathleen']],
+    ['kate', ['Katherine', 'Kathleen', 'Kaitlyn', 'Katrina']],
+    ['chris', ['Christopher', 'Christine', 'Christina', 'Kristine', 'Kristen']],
+    ['joe', ['Joseph', 'Josephine']],
+    ['will', ['William', 'Willard', 'Wilbur']],
+    ['wally', ['Walter', 'Wallace']],
+    ['margie', ['Margaret', 'Marjorie', 'Margery']],
+    ['jo', ['Joan', 'Joanne', 'Joann', 'Josephine']]
+  ]) for (const f of formals) assert.ok(fits(short, f), `${short} fits ${f}`)
+})
+
+test('distinct formal names do not fit each other; Dora is not a short form', () => {
+  const fits = (typed, firstName) => nameMatches({ first: typed, last: 'Doe' }, { firstName, lastName: 'Doe' })
+  assert.ok(!fits('Kathleen', 'Katherine'))
+  assert.ok(!fits('Edward', 'Edwin'))
+  assert.ok(!fits('Theodora', 'Dora'))
+  assert.ok(fits('Elisabeth', 'Elizabeth'))
 })
