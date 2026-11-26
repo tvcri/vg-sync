@@ -2,6 +2,7 @@
 // Activity mapping is ported from the July prototype. Pure: no I/O.
 // Question ids: 2 volunteer name, 3 member name, 4 visit date, 5 minutes, 6 contact type,
 // 8 notes, 10 village, 13 reporting tag, 21 activity types, 23 volunteer email.
+import { nameKey } from './names.js'
 
 // Column limits from VG's FcvSyncSubmissionPut schema. Longer values are trimmed, because VG answers 400
 // to them and the report would then fail every pass.
@@ -82,11 +83,15 @@ export function parseSubmission(sub, villagesByName) {
   const contactType = text(a[6]?.answer, LIMITS.contactType)
   const activityOther = extractActivityOther(a[21]?.answer)
 
+  const volunteer = name(a[2]?.answer)
+  const member = name(a[3]?.answer)
   let unreadable = null
   if (villageId === null) unreadable = 'village'
   else if (visitDate === null) unreadable = 'visit-date'
   else if (timeSpentMinutes === null) unreadable = 'time-spent'
   else if (contactType === null) unreadable = 'contact-type'
+  else if (nameKey(volunteer.raw) === '') unreadable = 'volunteer-name'
+  else if (nameKey(member.raw) === '') unreadable = 'member-name'
 
   return {
     id: sub.id,
@@ -94,8 +99,8 @@ export function parseSubmission(sub, villagesByName) {
     jotformUpdatedAt: sub.updated_at || null,
     villageId,
     villageName: villageTyped === null ? null : villageTyped.slice(0, LIMITS.villageName),
-    volunteer: name(a[2]?.answer),
-    member: name(a[3]?.answer),
+    volunteer,
+    member,
     volunteerEmail: text(a[23]?.answer, LIMITS.volunteerEmail),
     visitDate,
     timeSpentMinutes,

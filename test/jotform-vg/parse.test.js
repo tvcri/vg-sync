@@ -123,3 +123,9 @@ test('values over VG column limits are trimmed', () => {
 test('notes pass through; empty notes are null', () => {
   assert.equal(parse({ answers: { 8: { answer: '' } } }).notes, null)
 })
+
+test('a volunteer or member name with no letters is unreadable', () => {
+  assert.equal(parse({ answers: { 2: { answer: { first: '', last: '' } } } }).unreadable, 'volunteer-name')
+  assert.equal(parse({ answers: { 2: { answer: { first: '.', last: '-' } } } }).unreadable, 'volunteer-name')
+  assert.equal(parse({ answers: { 3: { answer: { first: '.', last: '-' } } } }).unreadable, 'member-name')
+})

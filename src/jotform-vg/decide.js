@@ -115,6 +115,7 @@ export function collectHolds (decided) {
       for (const [role, result, typed] of [['volunteer', volunteerResult, parsed.volunteer], ['member', memberResult, parsed.member]]) {
         if (!unmatched(result)) continue
         const key = nameKey(typed?.raw)
+        if (key === '') continue // VG refuses a name hold with no key
         const villageId = parsed.villageId == null ? null : String(parsed.villageId)
         const id = `${role}|${villageId}|${key}`
         let h = names.get(id)
