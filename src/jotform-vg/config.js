@@ -47,6 +47,12 @@ function toBounded(env, name, fallback, max) {
   return n
 }
 
+function toAtLeast(env, name, fallback, min) {
+  const n = toCount(env, name, fallback)
+  if (n < min) throw new Error(`${name} must be at least ${min}, got "${n}"`)
+  return n
+}
+
 function toClock(env, name, fallback) {
   if (!present(env[name])) return fallback
   const s = String(env[name]).trim()
@@ -76,7 +82,8 @@ export function loadConfig(env = process.env) {
     writeVg: String(env.WRITE_VG ?? '').trim() === 'true',
     changeEveryMinutes: toPositive(env, 'CHANGE_EVERY_MINUTES', 5),
     fullRunUtc: toClock(env, 'FULL_RUN_UTC', '08:00'),
-    overlapMinutes: toPositive(env, 'OVERLAP_MINUTES', 120),
+    // At least an hour: the window must cover the hour repeated when clocks fall back.
+    overlapMinutes: toAtLeast(env, 'OVERLAP_MINUTES', 120, 60),
     minFullPercent: toBounded(env, 'MIN_FULL_PERCENT', 90, 100),
     dateAheadDays: toCount(env, 'DATE_AHEAD_DAYS', 1),
     dateBehindDays: toCount(env, 'DATE_BEHIND_DAYS', 90),

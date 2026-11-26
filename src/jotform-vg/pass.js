@@ -25,6 +25,31 @@ const byId = (list) => {
   return map
 }
 
+// The created and updated lists merged by id. A submission in both is kept once, as the copy with the
+// later updated_at (null lowest), in case it was edited between the two reads.
+function mergeFetched (created, updated) {
+  const map = new Map()
+  for (const s of [...created, ...updated]) {
+    const id = String(s.id)
+    const had = map.get(id)
+    if (!had || (s.updated_at || '') > (had.updated_at || '')) map.set(id, s)
+  }
+  return map
+}
+
+// Ids compared as numbers when they are digits (19-digit strings, so by length first).
+function compareIds (a, b) {
+  a = String(a)
+  b = String(b)
+  if (a.length !== b.length && /^\d+$/.test(a) && /^\d+$/.test(b)) return a.length - b.length
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+// Oldest JotForm time first. VG's cursor is the latest time stored, so if a write fails partway, no
+// report older than one already written is left behind the next change pass's window.
+const rowTime = (row) => row.jotformUpdatedAt ?? row.submittedAt ?? ''
+const oldestFirst = (x, y) => (rowTime(x.row) < rowTime(y.row) ? -1 : rowTime(x.row) > rowTime(y.row) ? 1 : compareIds(x.row.id, y.row.id))
+
 export async function runPass (kind, { jotform, vg, config, stdout = console.log }) {
   if (kind !== 'change' && kind !== 'full') throw new Error(`runPass: kind must be change or full, got ${kind}`)
 
@@ -49,14 +74,15 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
   if (kind === 'change' && state?.cursor != null) {
     const after = cursorMinus(state.cursor, config.overlapMinutes)
     const [created, updated] = await Promise.all([jotform.listSince('created_at', after), jotform.listSince('updated_at', after)])
-    fetched = byId([...created, ...updated]) // a submission in both is processed once
+    fetched = mergeFetched(created, updated) // a submission in both is processed once
   } else {
     ran = 'full'
     fetched = byId(await jotform.listAll())
   }
 
   // Deletion guard, before any write: a short full read must not delete reports.
-  if (ran === 'full' && fetched.size < (config.minFullPercent / 100) * stored.size) {
+  // Integer arithmetic: 0.9 × 10 in floating point is not 9.
+  if (ran === 'full' && fetched.size * 100 < config.minFullPercent * stored.size) {
     throw new Error(`full read returned ${fetched.size} of ${stored.size} stored; nothing deleted`)
   }
 
@@ -83,6 +109,20 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
     return { parsed, row, volunteerResult, memberResult, stored: storedRow ?? null }
   }
 
+  // A stored row as a decision, unchanged: its persons as stored, and for a role it has no person, the
+  // candidates a match finds now (for the hold's detail). Null for a legacy row.
+  function asStored (s) {
+    const parsed = rowFromStored(s)
+    if (parsed === null) return null
+    const result = (role) => {
+      const pid = s[`${role}PersonId`]
+      if (pid != null) return { personId: String(pid), how: s[`${role}Match`] ?? null }
+      const fresh = matchPerson({ role, typed: parsed[role], email: role === 'volunteer' ? parsed.volunteerEmail : null, villageId: parsed.villageId }, roster, remembered)
+      return { personId: null, candidates: fresh.candidates ?? [] }
+    }
+    return { parsed, row: s, volunteerResult: result('volunteer'), memberResult: result('member'), stored: s }
+  }
+
   // 3. Every fetched submission, parsed afresh.
   const decided = []
   for (const [id, sub] of fetched) {
@@ -92,7 +132,9 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
   }
 
   // 4. Stored reports not fetched: deleted on a full pass; on a change pass, re-matched from storage when
-  // held or when a name now has a remembered answer. Legacy rows (rowFromStored null) are left alone.
+  // held or when a name now has a remembered answer. Legacy rows (rowFromStored null) are left alone: they
+  // are re-parsed only when JotForm lists them, which for most is the first full pass (run at start-up).
+  // So a legacy row the prototype left unmatched opens its name hold only at that first full pass.
   const deletions = []
   for (const [id, s] of stored) {
     if (fetched.has(id)) continue
@@ -104,7 +146,12 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
     decided.push(decide(parsed, s, s))
   }
 
-  const puts = decided.filter((d) => d.stored === null || rowsDiffer(d.row, d.stored))
+  // Second guard: even when the read looks whole, a full pass deletes no more than the share it may miss.
+  if (deletions.length * 100 > (100 - config.minFullPercent) * stored.size) {
+    throw new Error(`full read would delete ${deletions.length} of ${stored.size} stored; nothing deleted`)
+  }
+
+  const puts = decided.filter((d) => d.stored === null || rowsDiffer(d.row, d.stored)).sort(oldestFirst)
   const counts = {
     kind: ran,
     fetched: fetched.size,
@@ -120,7 +167,7 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
 
   // 5. Writes, in order: rows, deletions, holds. A 422 on one row (VG refuses a person or village) is
   // counted and skipped; any other error ends the pass.
-  const failedInserts = new Set()
+  const failed = new Set()
   if (config.writeVg) {
     for (const d of puts) {
       try {
@@ -128,7 +175,7 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
       } catch (err) {
         if (err?.status !== 422) throw err
         counts.failed++
-        if (d.stored === null) failedInserts.add(d.row.id)
+        failed.add(d)
         continue
       }
       if (d.stored === null) counts.inserted++
@@ -143,8 +190,15 @@ export async function runPass (kind, { jotform, vg, config, stdout = console.log
     counts.deleted = deletions.length
   }
 
-  // 6. Holds from every report's current decision; a report VG refused to insert has no row to hold.
-  const current = decided.filter((d) => !failedInserts.has(d.row.id))
+  // 6. Holds from what VG holds for every report: the new decision, or for a refused write the stored
+  // row. A refused insert has no row to hold; a refused update of a legacy row is counting in VG.
+  const current = []
+  for (const d of decided) {
+    if (!failed.has(d)) { current.push(d); continue }
+    if (d.stored === null) continue
+    const kept = asStored(d.stored)
+    if (kept) current.push(kept)
+  }
   for (const d of current) if (HELD.includes(d.row.held)) counts.held[d.row.held]++
   const holds = collectHolds(current, { priorReasons })
   counts.openHolds = holds.length

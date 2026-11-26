@@ -37,3 +37,8 @@ test('bad values are refused', () => {
   assert.throws(() => loadConfig({ ...base, RUN_TIMEOUT_MINUTES: '1441' }), /at most 1440/)
   assert.throws(() => loadConfig({ ...base, VG_API_URL: 'http://vg.example.org' }), /https/)
 })
+
+test('OVERLAP_MINUTES must cover the repeated fall-back hour', () => {
+  assert.throws(() => loadConfig({ ...base, OVERLAP_MINUTES: '59' }), /OVERLAP_MINUTES must be at least 60/)
+  assert.equal(loadConfig({ ...base, OVERLAP_MINUTES: '60' }).overlapMinutes, 60)
+})
