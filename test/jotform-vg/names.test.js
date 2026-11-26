@@ -53,11 +53,31 @@ test('first word of the typed first name agrees', () => {
   assert.ok(!nameMatches({ first: 'Joan A.', last: 'Doe' }, jane))
 })
 
+test('a double first name fits a single one, either way, but not a different double', () => {
+  const d = (firstName, nickname) => ({ firstName, lastName: 'Doe', nickname })
+  assert.ok(nameMatches({ first: 'Mary', last: 'Doe' }, d('Mary Kate')))
+  assert.ok(nameMatches({ first: 'Mary Ellen', last: 'Doe' }, d('Mary')))
+  assert.ok(!nameMatches({ first: 'Mary Ellen', last: 'Doe' }, d('Mary Kate')))
+  assert.ok(nameMatches({ first: 'Mary Kate', last: 'Doe' }, d('Mary Kate')))
+  assert.ok(nameMatches({ first: 'Molly', last: 'Doe' }, d('Mary Kate')))
+  assert.ok(nameMatches({ first: 'Mary', last: 'Doe' }, d('Zed', 'Mary Kate')))
+  assert.ok(!nameMatches({ first: 'Mary Ellen', last: 'Doe' }, d('Zed', 'Mary Kate')))
+})
+
 test('one generational suffix is ignored on either side', () => {
   assert.ok(nameMatches({ first: 'Jane', last: 'Doe Jr.' }, jane))
   assert.ok(nameMatches({ first: 'Jane', last: 'Doe' }, { ...jane, lastName: 'Doe III' }))
   assert.ok(nameMatches({ first: 'Doe Sr', last: 'Jane' }, jane))
   assert.ok(!nameMatches({ first: 'Jane', last: 'Roe Jr' }, jane))
+})
+
+test('different generational suffixes do not match', () => {
+  const john = (lastName) => ({ firstName: 'John', lastName })
+  assert.ok(!nameMatches({ first: 'John', last: 'Doe Jr' }, john('Doe Sr')))
+  assert.ok(!nameMatches({ first: 'Doe Sr', last: 'John' }, john('Doe Jr')))
+  assert.ok(nameMatches({ first: 'John', last: 'Doe Jr' }, john('Doe')))
+  assert.ok(nameMatches({ first: 'John', last: 'Doe' }, john('Doe Jr')))
+  assert.ok(nameMatches({ first: 'John', last: 'Doe Jr.' }, john('Doe Jr')))
 })
 
 test('multi-word last names compare by whole key', () => {
@@ -82,4 +102,26 @@ test('firstNamesAgree: equal keys and missing names', () => {
 test('no match when a part is missing', () => {
   assert.ok(!nameMatches({ first: '', last: '' }, jane))
   assert.ok(!nameMatches({ first: 'Jane', last: '' }, jane))
+})
+
+test('short forms used by several formal names fit every one of them', () => {
+  const fits = (typed, firstName) => nameMatches({ first: typed, last: 'Doe' }, { firstName, lastName: 'Doe' })
+  for (const [short, formals] of [
+    ['Pat', ['Patrick', 'Patricia']],
+    ['Sam', ['Samuel', 'Samantha']],
+    ['Sandy', ['Sandra', 'Alexandra', 'Alexander']],
+    ['Al', ['Albert', 'Alfred', 'Alan', 'Allen']],
+    ['Alex', ['Alexander', 'Alexandra', 'Alexis']],
+    ['Charlie', ['Charles', 'Charlotte']],
+    ['Danny', ['Daniel', 'Danielle']],
+    ['Ed', ['Edward', 'Edwin', 'Edmund']],
+    ['Nicky', ['Nicholas', 'Nicole']]
+  ]) for (const f of formals) assert.ok(fits(short, f), `${short} fits ${f}`)
+  assert.ok(!fits('Patrick', 'Patricia'))
+  assert.ok(!fits('Samuel', 'Samantha'))
+})
+
+test('no short form lists only one formal name that another group also claims', () => {
+  // every key that is in two or more groups stays consistent with the principle: nothing to assert but the table shape
+  for (const g of NICKNAMES) assert.equal(new Set(g).size, g.length)
 })

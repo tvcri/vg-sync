@@ -3,7 +3,9 @@ import { NICKNAMES } from './nicknames.js'
 
 export { NICKNAMES }
 
-// Lowercase letters only, accents folded, every run of anything else one space.
+// Lowercase letters only, accents folded, every run of anything else one space. Combining marks are
+// stripped from every script; accepted because the membership's names are Latin-script and the effect
+// elsewhere is a rare over-match.
 export function nameKey (s) {
   return String(s ?? '')
     .normalize('NFKD')
@@ -35,37 +37,42 @@ function keysAgree (a, b) {
   return false
 }
 
-// The person's first-name and nickname keys, each also by its first word.
-function personKeys (person) {
-  const keys = new Set()
-  for (const raw of [person?.firstName, person?.nickname]) {
-    const k = nameKey(raw)
-    if (k) { keys.add(k); keys.add(firstWord(k)) }
-  }
-  return keys
+// Two first-name keys agree when equal or in a shared NICKNAMES group. When exactly one of them is
+// several words, its first word is also tried, so 'mary' fits 'mary kate' but 'mary ellen' does not.
+function namesAgree (t, p) {
+  if (keysAgree(t, p)) return true
+  const tw = firstWord(t)
+  const pw = firstWord(p)
+  if (tw !== t && pw === p) return keysAgree(tw, p)
+  if (pw !== p && tw === t) return keysAgree(t, pw)
+  return false
 }
 
-// typedFirstKey is already a nameKey. The whole key is tried first, then its first word.
-export function firstNamesAgree (typedFirstKey, person) {
-  const typed = nameKey(typedFirstKey)
+// typedFirstName is any string; it is turned into a key here. The person's first name and nickname
+// (null, empty or several words) are each tried.
+export function firstNamesAgree (typedFirstName, person) {
+  const typed = nameKey(typedFirstName)
   if (!typed) return false
-  const candidates = [typed]
-  if (firstWord(typed) !== typed) candidates.push(firstWord(typed))
-  const keys = personKeys(person)
-  return candidates.some((t) => [...keys].some((p) => keysAgree(t, p)))
+  return [person?.firstName, person?.nickname]
+    .map(nameKey)
+    .some((p) => p && namesAgree(typed, p))
 }
 
-// One trailing generational suffix is dropped, unless it is the whole key.
-function lastKey (s) {
+// The last-name key without one trailing generational suffix (kept apart), unless it is the whole key.
+function lastParts (s) {
   const words = nameKey(s).split(' ').filter(Boolean)
-  if (words.length > 1 && SUFFIXES.has(words[words.length - 1])) words.pop()
-  return words.join(' ')
+  let suffix = ''
+  if (words.length > 1 && SUFFIXES.has(words[words.length - 1])) suffix = words.pop()
+  return { key: words.join(' '), suffix }
+}
+
+// Equal keys; suffixes must agree only when both sides carry one ('Doe Jr' fits 'Doe', not 'Doe Sr').
+function lastsAgree (a, b) {
+  return a.key !== '' && a.key === b.key && (!a.suffix || !b.suffix || a.suffix === b.suffix)
 }
 
 export function nameMatches (typed, person) {
-  const personLast = lastKey(person?.lastName)
-  if (!personLast) return false
-  const direct = lastKey(typed?.last) === personLast && firstNamesAgree(nameKey(typed?.first), person)
-  if (direct) return true
-  return lastKey(typed?.first) === personLast && firstNamesAgree(nameKey(typed?.last), person)
+  const personLast = lastParts(person?.lastName)
+  if (lastsAgree(lastParts(typed?.last), personLast) && firstNamesAgree(typed?.first, person)) return true
+  return lastsAgree(lastParts(typed?.first), personLast) && firstNamesAgree(typed?.last, person)
 }
