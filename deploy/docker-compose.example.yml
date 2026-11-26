@@ -31,3 +31,18 @@ services:
     volumes:
       - ./mailchimp/.env:/app/.env:ro
       - ./mailchimp/out:/app/out
+  jotform:
+    # Keep this line in the `repo@sha256:` form: the deployer rewrites it.
+    # Its own image, built only when the jotform service's code changes.
+    image: carlsmig/vg-sync-jotform@sha256:<digest>  # <commit>
+    restart: unless-stopped
+    # A tiny init as PID 1 forwards SIGTERM to node and reaps zombies.
+    init: true
+    stop_grace_period: 30s
+    # The host out directory must exist before the first start and be writable
+    # by uid 1000, as for `sync`, e.g. `install -d -o 1000 -g 1000
+    # jotform/out`. This service has its own .env (its own VG client and
+    # JotForm key), readable by uid 1000.
+    volumes:
+      - ./jotform/.env:/app/.env:ro
+      - ./jotform/out:/app/out

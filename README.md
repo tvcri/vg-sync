@@ -3,7 +3,7 @@
 Scheduled, headless synchronization between Little Green Light, Village Green
 and Mailchimp for Village Common of Rhode Island.
 
-The LGL ↔ VG sync is built; the VG → Mailchimp executable is described under "VG → Mailchimp audience" below. A reference to
+The LGL ↔ VG sync is built; the VG → Mailchimp executable is described under "VG → Mailchimp audience" below, and the JotForm → VG executable under "JotForm → VG reports". A reference to
 every command, option, variable and output line is in
 [`docs/vg-sync.1.md`](docs/vg-sync.1.md). The rules file is described in
 [`docs/policy.json.5.md`](docs/policy.json.5.md). `CLAUDE.md` says where the related
@@ -81,6 +81,22 @@ anything but absent. Both writes are off until `WRITE_MAILCHIMP_ADD` and
 command, setting, log line and the records format is in
 [`docs/vg-mailchimp.1.md`](docs/vg-mailchimp.1.md).
 
+## JotForm → VG reports
+
+A third executable, `src/jotform-vg/main.js`, shares no code with the other
+two and has its own image. It copies the JotForm Friendly Calls & Visits
+reports into VG: a change pass every few minutes and a full pass nightly. It
+matches each report's member and volunteer names to VG people, holds out
+reports it cannot match or whose date is implausible until staff resolve them,
+and sends VG the set of open holds. It only reads from JotForm and writes to
+VG only when `WRITE_VG=true`. `npm run jotform` starts the service,
+`npm run jotform-once -- change` (or `full`) makes one dry run by hand, and
+`npm run jotform-setup` prepares the service account. It has its own `.env`
+and `out` directory (see `deploy/docker-compose.example.yml`). Every command,
+setting and log line is in [`docs/jotform-vg.1.md`](docs/jotform-vg.1.md); the
+design is
+[`docs/superpowers/specs/2026-11-26-jotform-vg-design.md`](docs/superpowers/specs/2026-11-26-jotform-vg-design.md).
+
 ## The images
 
 Each service ships as its own Docker image, so a change to one service builds
@@ -90,10 +106,11 @@ and redeploys only that service:
 |---|---|---|---|
 | `sync` (LGL ↔ VG) | `carlsmig/vg-sync-lgl` | `lgl-vg.Dockerfile` | `publish-lgl-vg.yml` |
 | `mailchimp` (VG → Mailchimp) | `carlsmig/vg-sync-mailchimp` | `vg-mailchimp.Dockerfile` | `publish-vg-mailchimp.yml` |
+| `jotform` (JotForm → VG) | `carlsmig/vg-sync-jotform` | `jotform-vg.Dockerfile` | `publish-jotform-vg.yml` |
 
 Each workflow runs on a push to `main` that touches that service's inputs (its
 `src/` folder, its Dockerfile, `package.json`, plus the LGL service's
-`policy.json` and `policy-reconcile.json`), and both call
+`policy.json` and `policy-reconcile.json`), and all call
 `.github/workflows/publish-image.yml`, which runs every test before it
 builds. If a Dockerfile ever copies a new path, add the path to its workflow's
 filter: a missing entry means a real change silently doesn't deploy. Images
