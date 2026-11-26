@@ -435,6 +435,30 @@ Settings with safe defaults until answered:
    drop lists, not decided on its own. This design does not depend on it.
 5. **The holds page:** which of the two layouts.
 
+## Changes made while building
+
+The build (plan `docs/superpowers/plans/2026-11-26-jotform-vg.md`) renamed
+or settled these; the man page, `docs/jotform-vg.1.md`, is current.
+
+- **Log markers** are `JOTFORM ALIVE`, `JOTFORM OK`, `JOTFORM WARN` and
+  `JOTFORM FAILED`, not `SYNC ALIVE` / `PASS FAILED`.
+- **Settings** carry their units: `WRITE_VG`, `CHANGE_EVERY_MINUTES`,
+  `OVERLAP_MINUTES`, `MIN_FULL_PERCENT`. `FULL_AT` (03:00 Eastern) became
+  `FULL_RUN_UTC`, default `08:00` UTC: 03:00 Eastern in winter, 04:00 in
+  summer.
+- **No `jotformCreatedAt` column.** `submittedAt` holds JotForm's
+  `created_at` as given; `jotformUpdatedAt` holds `updated_at`.
+- **Permissions** are `fcv_sync:read`, `fcv_sync:write` and
+  `fcv_sync:resolve`.
+- **A guard trip refuses every write of that pass**, not only its
+  deletions: a short full read, or one that would delete more than the
+  allowed share, writes no rows, deletions or holds.
+- **A row VG refuses** with 400, 413 or 422 is skipped and counted in
+  `failed`; the pass goes on. Any other error ends the pass. Long values,
+  notes included (16,000 characters), are trimmed to VG's limits first.
+- **An empty typed name** (volunteer or member) makes a report unreadable
+  (`volunteer-name` / `member-name`), rather than a name hold.
+
 ## Deferred
 
 - The holds page (VG client), after question 5.

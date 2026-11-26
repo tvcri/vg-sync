@@ -38,16 +38,19 @@ converted.
 `CHANGE_EVERY_MINUTES` after the first full pass succeeds. One pass runs at a
 time. A failed full pass is retried an hour later, at most three times; a
 failed change pass waits for its next turn. A pass longer than
-`RUN_TIMEOUT_MINUTES` is stopped and fails. A 401 or 403 from VG ends the
-service (exit 1). A heartbeat line prints every five minutes. It writes to VG
+`RUN_TIMEOUT_MINUTES` is stopped and fails. A 401 or 403 from VG or from
+JotForm ends the service (exit 1). A heartbeat line prints every five minutes. It writes to VG
 only when `WRITE_VG=true`.
 
 A **change pass** asks JotForm for submissions created or updated after the
 cursor held in VG, minus `OVERLAP_MINUTES`. A **full pass** reads every
 submission, and also deletes the VG reports that JotForm no longer lists. If
 JotForm returned too few of the stored reports (fewer than `MIN_FULL_PERCENT`
-percent of them), it deletes nothing and fails with
-`full read returned <n> of <m> stored; nothing deleted`.
+percent of them), it writes nothing and fails with
+`full read returned <n> of <m> stored; nothing deleted`. If the read looks
+whole but would still delete more than the rest of that share, it writes
+nothing and fails with `full read would delete <n> of <m> stored; nothing
+deleted`. See SAFETY for recovery.
 
 **`--once change|full`**. One pass by hand, then exit. It is a dry run unless
 `WRITE_VG=true`. Safe to run beside the service only when dry.
@@ -75,7 +78,7 @@ Required: `JOTFORM_API_KEY` (unless `JOTFORM_MOCK` is set), `JOTFORM_FORM_ID`,
 | Variable | Default | Meaning |
 |---|---|---|
 | `WRITE_VG` | `false` | `true`: passes write to VG. Otherwise they compute everything and count what they would write. |
-| `CHANGE_EVERY_MINUTES` | 5 | Minutes from the end of one job to the next change pass. |
+| `CHANGE_EVERY_MINUTES` | 5 (max 1440) | Minutes from the end of one job to the next change pass. |
 | `FULL_RUN_UTC` | `08:00` | Time of the nightly full pass (UTC; 03:00 Eastern in winter). |
 | `OVERLAP_MINUTES` | 120 (at least 60) | A change pass reads from the cursor minus this. Covers the hour repeated when clocks fall back. |
 | `MIN_FULL_PERCENT` | 90 (1 to 100) | A full read that would delete more than the rest of this share of the stored reports deletes none and fails. |
@@ -83,7 +86,7 @@ Required: `JOTFORM_API_KEY` (unless `JOTFORM_MOCK` is set), `JOTFORM_FORM_ID`,
 | `DATE_BEHIND_DAYS` | 90 | A visit date more than this many days before the report is questionable. |
 | `RUN_TIMEOUT_MINUTES` | 30 (max 1440) | A longer pass is stopped and fails. |
 | `VG_SCOPE` | `vg` | OAuth scope requested from VG's identity provider. |
-| `JOTFORM_MOCK` | none | A state file that stands in for JotForm, for rehearsals: no request reaches JotForm and the first line printed says so. Shape: `{ "form": { "status": "ENABLED" }, "submissions": [ … ] }`. |
+| `JOTFORM_MOCK` | none | A state file that stands in for JotForm, for rehearsals: no request reaches JotForm and the first line printed says so. The service only reads it (a rehearsal edits it by hand between passes). The service writes no files; `out/` is used only to hold this file in mock rehearsals. Shape: `{ "form": { "status": "ENABLED" }, "submissions": [ … ] }`. |
 | `IMAGE_REVISION` | none | The commit (set by the image). |
 
 ## OUTPUT
@@ -95,13 +98,13 @@ names, emails or notes.
 | Line | Meaning |
 |---|---|
 | `JOTFORM DRY RUN: nothing is written to VG` | `WRITE_VG` is not `true`. Printed first. |
-| `JOTFORM MOCK <file>: no request reaches JotForm; writes change this file` | `JOTFORM_MOCK` is set. |
+| `JOTFORM MOCK <file>: no request reaches JotForm; submissions are read from this file` | `JOTFORM_MOCK` is set. |
 | `STARTUP VG signed in as <user>` / `STARTUP JotForm form reached` / `STARTUP scheduler started write-vg=<on\|off> full=<HH:MM>Z change-every=<n>m` | Start-up done. |
 | `STARTUP FAILED <reason>` | Could not start (sign-in, JotForm not reached, configuration); exits 1. Alerted. |
 | `JOTFORM OK <change\|full> fetched=<n> inserted=<n> updated=<n> unchanged=<n> deleted=<n> failed=<n> held_name=<n> held_date=<n> held_ignored=<n> held_unreadable=<n> open_holds=<n> wrote=<true\|false>` | A pass finished. On a dry run the counts are what a write pass would do. |
 | `JOTFORM WARN <kind> failed=<n>` | A pass finished but VG refused <n> reports (kept as they were). Alerted. |
 | `JOTFORM WARN form status is <status>, not ENABLED` | The form is not enabled; it may still hold reports. |
-| `JOTFORM FAILED <kind>: <reason>` | A pass failed (read, VG, timeout, refused deletion). Alerted. |
+| `JOTFORM FAILED <kind>: <reason>` | A pass failed (read, VG, timeout, refused deletion: `full read returned <n> of <m> stored; nothing deleted` or `full read would delete <n> of <m> stored; nothing deleted`). Alerted. |
 | `JOTFORM FAILED scheduler error` | An unexpected error in the scheduler. Alerted. |
 | `JOTFORM ALIVE last=<time\|none> result=<ok\|failed\|none>` | Heartbeat, every five minutes. Alerted when absent. |
 | `STOPPING` / `STOPPED` | Shutdown begun and finished. |
@@ -129,10 +132,31 @@ names, emails or notes.
 
 - Nothing is written to VG unless `WRITE_VG=true`.
 - The JotForm client has only GET: JotForm is never written.
-- **Deletion guard**: a full read that would delete more than the allowed
-  share of stored reports deletes none and fails.
-- A report VG refuses (422) is counted in `failed` and keeps its stored
-  state; its holds are kept.
+- **Deletion guard**: a full read that returns too few of the stored reports,
+  or that would delete more than the allowed share of them, writes nothing
+  that pass (no rows, deletions or holds) and fails.
+- A report VG refuses (400, 413 or 422) is counted in `failed` and keeps its
+  stored state; its holds are kept. The pass goes on with the others.
+
+**Recovering from a refused full pass.** A running service keeps its change
+passes after a refused nightly full pass, but after any restart no change
+pass runs until a full pass succeeds, so new reports stop reaching VG too.
+To recover:
+
+1. Check in JotForm whether the submissions were really deleted (compare the
+   form's submission count with `<m>` and `<n>` from the FAILED line). If
+   they were not, the read was short: look at JotForm, not the guard, and
+   wait for the next full pass.
+2. If they were deleted, stop the service.
+3. Run one full pass with writes on and `MIN_FULL_PERCENT` lowered just
+   enough to let the real deletions through: at most 100 minus the deleted
+   share. For 45 of 300 stored deleted (15%), 85:
+   `WRITE_VG=true MIN_FULL_PERCENT=85 node src/jotform-vg/main.js --once full`.
+   On the VM, after `docker compose stop jotform`:
+   `docker compose run --rm -e WRITE_VG=true -e MIN_FULL_PERCENT=85 jotform node src/jotform-vg/main.js --once full`.
+   Expect `JOTFORM OK full … deleted=<n> wrote=true`.
+4. Restart the service with the normal `MIN_FULL_PERCENT` (leave `.env`
+   unchanged; the lowered value was for the one run).
 
 ## EXAMPLES
 

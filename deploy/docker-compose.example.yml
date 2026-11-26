@@ -42,7 +42,8 @@ services:
     # The host out directory must exist before the first start and be writable
     # by uid 1000, as for `sync`, e.g. `install -d -o 1000 -g 1000
     # jotform/out`. This service has its own .env (its own VG client and
-    # JotForm key), readable by uid 1000.
+    # JotForm key), readable by uid 1000. It uses out/ only with JOTFORM_MOCK
+    # (a rehearsal's mock state file); in production nothing is written there.
     volumes:
       - ./jotform/.env:/app/.env:ro
       - ./jotform/out:/app/out

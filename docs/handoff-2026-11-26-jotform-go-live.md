@@ -60,11 +60,10 @@ holds page or answers the date question.
 
 Each production step needs the engineer's go-ahead.
 
-1. **Merge village-green PR #165** after its checklist:
-   - fix the stale header comment in `FcvSyncService.js` (staff
-     resolutions are audited now);
-   - re-run migration 0037 `down()` then `up()` on a fresh copy of the
-     production dump (down was reordered after the production-data run).
+1. **Merge village-green PR #165.** Its checklist is done: the header
+   comment in `FcvSyncService.js` is fixed, and migration 0037 (now with
+   binary collation on the name keys) was re-run `up()`, `down()`, `up()`
+   on a fresh copy of the production dump.
 2. **Production Keycloak client** for the sync (like the dev `vg-jot`):
    service account, top-level `vg` scope. Grant it **role 10, JotForm
    Sync, at federation level** in VG, then run
@@ -72,6 +71,15 @@ Each production step needs the engineer's go-ahead.
    `.env`. Expect `SETUP OK`.
 3. **Push `jotform-vg` to `main`** (or merge its PR). The
    `publish-jotform-vg.yml` workflow builds `carlsmig/vg-sync-jotform`.
+   **The same push also rebuilds and redeploys the LGL and Mailchimp
+   services.** This branch changes `package.json` and
+   `.github/workflows/publish-image.yml`, and both are in the path filters of
+   `publish-lgl-vg.yml` and `publish-vg-mailchimp.yml`. So the push builds
+   `carlsmig/vg-sync-lgl` and `carlsmig/vg-sync-mailchimp` too, and the VM's
+   deploy cron restarts the live `sync` and `mailchimp` containers on the new
+   digests (same code, new image). Time the push away from their runs (not
+   during an LGL pass or a Mailchimp sync) and watch their STARTUP lines and
+   health gate afterwards as well as the new service's.
 4. **vg-utils, on `main`, then installed on the VM:**
    - `vm-sidecar-deploy/sidecar-deploy.py`: add to `SERVICES`
      ```python
@@ -96,16 +104,36 @@ Each production step needs the engineer's go-ahead.
 5. **On the VM:** the `jotform` service in the compose file as in
    `deploy/docker-compose.example.yml`, with `jotform/.env` (VG client of
    step 2, `JOTFORM_API_KEY`, `JOTFORM_FORM_ID`; **no `WRITE_VG`**) and
-   `jotform/out` owned by uid 1000. Start it.
+   `jotform/out` owned by uid 1000. Start it. The service uses `out/`
+   only with `JOTFORM_MOCK`, to read a mock state file kept there for
+   rehearsals; in production it touches no files. The mount is harmless and
+   kept for mock rehearsals.
 6. **Watch the dry run** for a day: `JOTFORM DRY RUN`, a `JOTFORM OK full`
    line on start that should look like the table above (more reports by
-   then), `JOTFORM OK change` every 5 minutes, `JOTFORM ALIVE`.
+   then), `JOTFORM OK change` every 5 minutes, `JOTFORM ALIVE`. While writes
+   are off, VG's cursor never moves: it stays at the newest July row. So
+   every dry change pass reads everything since July and reports about
+   550 or more `inserted`, the same each time. That is expected, not a
+   fault; it drops to a handful once writes are on.
 7. **Switch writes on:** `WRITE_VG=true` in `.env`, restart. The first full
    pass replaces the 245 July rows in place, deletes the 3, inserts the
    rest and opens the holds. Check `JOTFORM OK full … wrote=true` and the
    Hub Friends list. Enable the alerts.
 8. **Board:** move card 528 along; tell the customer the reports are live
    and that about 119 items will wait for the holds page.
+
+## If a full pass is refused
+
+A full pass that trips the deletion guard (`full read returned <n> of <m>
+stored; nothing deleted`) or the deletion cap (`full read would delete <n>
+of <m> stored; nothing deleted`) writes nothing that pass. A running service
+keeps its change passes, but after any restart (a deploy, a VM reboot) no
+change pass runs until a full pass succeeds, so new reports stop reaching VG
+too. The recovery runbook is in the man page, `docs/jotform-vg.1.md`,
+SAFETY: check in JotForm whether the submissions were really deleted; if so,
+stop the service, run `--once full` with `WRITE_VG=true` and
+`MIN_FULL_PERCENT` lowered just enough, then restart with the normal
+setting.
 
 ## Questions for the customer
 
@@ -135,7 +163,15 @@ sync's raw feed); the `submittedAt` time-zone label on `GET /friends`.
 
 Recorded in `.superpowers/sdd/2026-11-26-jotform-vg/progress.md` (not in
 the repo) and listed for the whole-branch review; none blocks go-live. The
-notable ones: `CHANGE_EVERY_MINUTES` has no upper bound; an unknown match
+notable ones (`CHANGE_EVERY_MINUTES` is now capped at 1440): an unknown match
 role would be treated as volunteer (callers pass constants); duplicate
 roster ids turn a unique match into a hold; the nickname table is a
 judgment call (a short form missing from it gives no match, the safe side).
+
+**Known, deferred: the offset-paging race.** JotForm pages by offset. Above
+1000 submissions a full read takes more than one page, and a submission
+deleted in JotForm between two page reads shifts the later ones up by one, so
+one submission can fall off a page unread. The full pass would then delete
+that report from VG, and the next night's full pass (or a change pass, if it
+is edited) puts it back. The deletion cap bounds the damage; fixing it means
+paging by a stable key or re-reading, which JotForm's API makes awkward.
